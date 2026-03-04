@@ -2,4 +2,3 @@ ffmpeg
 libass-dev
 fonts-dejavu-core
 fonts-liberation
-fonts-ubuntu

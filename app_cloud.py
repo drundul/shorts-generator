@@ -288,7 +288,6 @@ with col2:
         "LiberationSans-Regular", "LiberationSans-Bold",
         "LiberationSerif-Regular", "LiberationSerif-Bold",
         "LiberationMono-Regular", "LiberationMono-Bold",
-        "Ubuntu-R", "Ubuntu-B",
     ]
 
     font = st.selectbox("Шрифт", FONTS, index=0)
