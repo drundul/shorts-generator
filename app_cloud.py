@@ -108,7 +108,7 @@ def hex_to_ass_color(hex_str):
 
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00"):
+                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False):
     center_y = int(960 + offset_y)
     base_color = hex_to_ass_color(base_color_hex)
     highlight_color = hex_to_ass_color(highlight_color_hex)
@@ -162,6 +162,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         text_line = ""
         for w_obj in chunk:
             w_text = w_obj['word']
+            if uppercase:
+                w_text = w_text.upper()
             rel_start = int((w_obj['start'] - line_start) * 1000)
             rel_end = int((w_obj['end'] - line_start) * 1000)
 
@@ -181,9 +183,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 # --- FUNC: PREVIEW ---
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         base_color_hex="#FFFFFF"):
+                         base_color_hex="#FFFFFF", uppercase_text=False):
     bg = Image.open(bg_image_path).convert("RGBA")
     bg = resize_to_shorts(bg)
+
+    if uppercase_text:
+        text_sample = text_sample.upper()
 
     txt_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
@@ -318,6 +323,7 @@ with col2:
         base_hex = st.color_picker("⬜ Основной цвет", "#FFFFFF")
     with c2:
         highlight_hex = st.color_picker("🎯 Цвет подсветки", "#FFFF00")
+    uppercase_cb = st.checkbox("АБВ Весь текст заглавными (CAPS LOCK)", value=False)
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
 
     with st.expander("📌 Настройки заголовка (Статичный текст)", expanded=False):
@@ -346,9 +352,9 @@ with col2:
 
     if preview_img_path:
         st.caption("Превью текста на фоне")
-        prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ВАШ ТЕКСТ ТУТ",
+        prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ваш текст\nтут смотрится так",
                                     static_text, st_font + ".ttf", st_size, st_color, st_pos,
-                                    base_color_hex=base_hex)
+                                    base_color_hex=base_hex, uppercase_text=uppercase_cb)
         prev.thumbnail((350, 622))
         st.image(prev)
 
@@ -433,7 +439,7 @@ else:
                     ass_path = os.path.join(OUTPUT_DIR, "subs.ass")
                     generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
-                                        base_color_hex=base_hex, highlight_color_hex=highlight_hex)
+                                        base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb)
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
