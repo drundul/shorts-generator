@@ -421,18 +421,29 @@ else:
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
+                    ass_basename = os.path.basename(ass_path)
 
                     if video_path:
                         # VIDEO background
-                        vf_filter = f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={os.path.basename(ass_path)}"
-                        cmd = ["ffmpeg", "-y", "-i", video_path, "-i", aud_path]
                         if mute_video:
-                            cmd += ["-map", "0:v", "-map", "1:a"]
+                            # Simple: take video, replace audio with our track
+                            cmd = [
+                                "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                "-map", "0:v", "-map", "1:a",
+                                "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}",
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
+                                "FINAL_SHORT.mp4"
+                            ]
                         else:
-                            cmd += ["-filter_complex", "[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
-                                    "-map", "0:v", "-map", "[aout]"]
-                        cmd += ["-vf", vf_filter, "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                                "-shortest", "FINAL_SHORT.mp4"]
+                            # Mix: video audio + our audio together
+                            cmd = [
+                                "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                "-filter_complex",
+                                f"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
+                                "-map", "[vout]", "-map", "[aout]",
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "FINAL_SHORT.mp4"
+                            ]
                     else:
                         # IMAGE background
                         final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
@@ -441,13 +452,13 @@ else:
                             im_resized.save(final_img_path, quality=95)
                         cmd = [
                             "ffmpeg", "-y", "-loop", "1", "-i", final_img_path, "-i", aud_path,
-                            "-vf", f"ass={os.path.basename(ass_path)}",
+                            "-vf", f"ass={ass_basename}",
                             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
                             "FINAL_SHORT.mp4"
                         ]
 
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    process.communicate()
+                    stdout, stderr = process.communicate()
 
                     if process.returncode == 0:
                         st.success("ГОТОВО!")
@@ -457,6 +468,7 @@ else:
                             st.download_button("📩 Скачать файл", f, "FINAL_SHORT.mp4")
                     else:
                         st.error("Ошибка при рендере FFmpeg")
+                        st.code(stderr.decode("utf-8", errors="ignore")[-1500:], language="text")
 
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
