@@ -98,6 +98,38 @@ def get_word_timestamps(audio_path, prompt_text=""):
 
     return transcript.words
 
+def fix_whisper_timings(words):
+    """
+    Создает "микро-паузы" между слипшимися словами.
+    Если слова накладываются или конец одного = начало другого, 
+    то немного подрезает конец первого слова.
+    """
+    if not words:
+        return words
+        
+    res = [{"start": w.start, "end": w.end, "word": w.word} for w in words]
+    
+    for i in range(len(res) - 1):
+        curr_w = res[i]
+        next_w = res[i+1]
+        
+        # Проверяем зазор между словами
+        if next_w['start'] - curr_w['end'] < 0.04:
+            new_end = next_w['start'] - 0.04
+            # Оставляем минимальную длину для текущего слова 0.05с
+            if new_end - curr_w['start'] >= 0.05:
+                curr_w['end'] = new_end
+            else:
+                curr_w['end'] = curr_w['start'] + 0.05
+                # Сдвигаем начало следующего слова, если оно наползает
+                if next_w['start'] <= curr_w['end']:
+                    next_w['start'] = curr_w['end'] + 0.02
+                    # Предотвращаем инверсию (начало > конец)
+                    if next_w['end'] <= next_w['start']:
+                        next_w['end'] = next_w['start'] + 0.05
+
+    return res
+
 # --- FUNC: HELPER ---
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip('#')
@@ -398,10 +430,8 @@ else:
                         st.toast("Используем файл с чистым голосом для распознавания!")
 
                     words_raw = get_word_timestamps(target_audio, prompt_input)
-                    st.session_state["words_data"] = [
-                        {"start": w.start, "end": w.end, "word": w.word}
-                        for w in words_raw
-                    ]
+                    fixed_words = fix_whisper_timings(words_raw)
+                    st.session_state["words_data"] = fixed_words
                     st.rerun()
                 except Exception as e:
                     st.error(f"Ошибка Whisper: {e}")
