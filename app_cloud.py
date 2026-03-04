@@ -107,9 +107,10 @@ def hex_to_ass_color(hex_str):
     return "&H00FFFFFF"
 
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
-                         static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500):
+                         static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
+                         highlight_color_hex="#FFFF00"):
     center_y = int(960 + offset_y)
-    highlight_color = "&H0000FFFF"
+    highlight_color = hex_to_ass_color(highlight_color_hex)
     ass_static_color = hex_to_ass_color(static_color)
 
     header = f"""[Script Info]
@@ -304,6 +305,7 @@ with col2:
 
     font = st.selectbox("Шрифт", FONTS, index=0)
     size = st.slider("Размер", 40, 150, 75)
+    highlight_hex = st.color_picker("🎯 Цвет подсветки слова", "#FFFF00")
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
 
     with st.expander("📌 Настройки заголовка (Статичный текст)", expanded=False):
@@ -417,7 +419,8 @@ else:
                     st.write("Генерация субтитров...")
                     ass_path = os.path.join(OUTPUT_DIR, "subs.ass")
                     generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
-                                        static_text, st_font, st_size, st_color, st_pos)
+                                        static_text, st_font, st_size, st_color, st_pos,
+                                        highlight_color_hex=highlight_hex)
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
