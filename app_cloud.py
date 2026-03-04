@@ -108,8 +108,9 @@ def hex_to_ass_color(hex_str):
 
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         highlight_color_hex="#FFFF00"):
+                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00"):
     center_y = int(960 + offset_y)
+    base_color = hex_to_ass_color(base_color_hex)
     highlight_color = hex_to_ass_color(highlight_color_hex)
     ass_static_color = hex_to_ass_color(static_color)
 
@@ -121,7 +122,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: BaseStyle,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,5,50,50,0,1
+Style: BaseStyle,{font_name},{font_size},{base_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,5,50,50,0,1
 Style: StaticStyle,{static_font},{static_size},{ass_static_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,5,50,50,0,1
 
 [Events]
@@ -165,8 +166,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             rel_end = int((w_obj['end'] - line_start) * 1000)
 
             effect = (
-                f"{{\\t({rel_start},{rel_start+1},\\1c{highlight_color})}}"
-                f"{{\\t({rel_end},{rel_end+1},\\1c&HFFFFFF&)}}"
+                f"{{\\1c{base_color}\\t({rel_start},{rel_start+1},\\1c{highlight_color})}}"
+                f"{{\\t({rel_end},{rel_end+1},\\1c{base_color})}}"
                 f"{w_text} "
             )
             text_line += effect
@@ -179,7 +180,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 # --- FUNC: PREVIEW ---
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
-                         static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500):
+                         static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
+                         base_color_hex="#FFFFFF"):
     bg = Image.open(bg_image_path).convert("RGBA")
     bg = resize_to_shorts(bg)
 
@@ -211,8 +213,14 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
         d.multiline_text((x + 4, y + 4), text, font=font, fill=(0, 0, 0, 180), align="center")
         d.multiline_text((x, y), text, font=font, fill=color, align="center")
 
+    if base_color_hex.startswith('#'):
+        h_b = base_color_hex.lstrip('#')
+        rgb_base = tuple(int(h_b[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
+    else:
+        rgb_base = (255, 255, 255, 255)
+
     dyn_y = (1920 / 2) + offset_y
-    draw_centered(text_sample, dyn_y, font_name, font_size)
+    draw_centered(text_sample, dyn_y, font_name, font_size, color=rgb_base)
 
     if static_text:
         if static_color.startswith('#'):
@@ -305,7 +313,11 @@ with col2:
 
     font = st.selectbox("Шрифт", FONTS, index=0)
     size = st.slider("Размер", 40, 150, 75)
-    highlight_hex = st.color_picker("🎯 Цвет подсветки слова", "#FFFF00")
+    c1, c2 = st.columns(2)
+    with c1:
+        base_hex = st.color_picker("⬜ Основной цвет", "#FFFFFF")
+    with c2:
+        highlight_hex = st.color_picker("🎯 Цвет подсветки", "#FFFF00")
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
 
     with st.expander("📌 Настройки заголовка (Статичный текст)", expanded=False):
@@ -335,7 +347,8 @@ with col2:
     if preview_img_path:
         st.caption("Превью текста на фоне")
         prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ВАШ ТЕКСТ ТУТ",
-                                    static_text, st_font + ".ttf", st_size, st_color, st_pos)
+                                    static_text, st_font + ".ttf", st_size, st_color, st_pos,
+                                    base_color_hex=base_hex)
         prev.thumbnail((350, 622))
         st.image(prev)
 
@@ -420,7 +433,7 @@ else:
                     ass_path = os.path.join(OUTPUT_DIR, "subs.ass")
                     generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
-                                        highlight_color_hex=highlight_hex)
+                                        base_color_hex=base_hex, highlight_color_hex=highlight_hex)
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
