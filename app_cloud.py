@@ -36,7 +36,7 @@ if not check_password():
 # ========================
 # CONFIG (Cloud-safe)
 # ========================
-WORK_DIR = tempfile.mkdtemp()
+WORK_DIR = "/tmp/shorts_gen"
 ASSETS_DIR = os.path.join(WORK_DIR, "assets")
 OUTPUT_DIR = os.path.join(WORK_DIR, "output")
 OVERLAY_PATH = os.path.join(ASSETS_DIR, "shorts_overlay.png")
