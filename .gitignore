@@ -1,0 +1,31 @@
+# Media files
+*.mp4
+*.mp3
+*.wav
+*.m4a
+*.ogg
+*.jpg
+*.jpeg
+*.png
+*.webm
+
+# Output
+output/
+shorts/
+shorts_v2/
+shorts_v3/
+shorts6/
+shorts 5/
+assets/
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# OS
+Thumbs.db
+.DS_Store
+
+# CSV exports
+*.csv
