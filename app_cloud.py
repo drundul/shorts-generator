@@ -262,12 +262,24 @@ col1, col2 = st.columns([1, 1])
 with col1:
     st.subheader("1. Файлы")
 
-    uploaded_img = st.file_uploader("📷 Загрузить фото (фон)", type=['jpg', 'png', 'jpeg'])
+    bg_type = st.radio("Тип фона:", ["📷 Фото", "🎥 Видео"], horizontal=True)
     img_path = None
-    if uploaded_img:
-        img_path = os.path.join(WORK_DIR, "uploaded_bg.png")
-        with open(img_path, "wb") as f:
-            f.write(uploaded_img.getbuffer())
+    video_path = None
+    mute_video = False
+
+    if bg_type == "📷 Фото":
+        uploaded_img = st.file_uploader("📷 Загрузить фото (фон)", type=['jpg', 'png', 'jpeg'])
+        if uploaded_img:
+            img_path = os.path.join(WORK_DIR, "uploaded_bg.png")
+            with open(img_path, "wb") as f:
+                f.write(uploaded_img.getbuffer())
+    else:
+        uploaded_vid = st.file_uploader("🎥 Загрузить видео (вертикальное)", type=['mp4', 'mov', 'webm'])
+        if uploaded_vid:
+            video_path = os.path.join(WORK_DIR, "uploaded_bg.mp4")
+            with open(video_path, "wb") as f:
+                f.write(uploaded_vid.getbuffer())
+        mute_video = st.checkbox("🔇 Убрать оригинальный звук из видео", value=True)
 
     audio_file = st.file_uploader("🎵 Аудио (Обязательно)", type=['mp3', 'wav', 'm4a'])
 
@@ -310,10 +322,14 @@ with col2:
                                     static_text, st_font + ".ttf", st_size, st_color, st_pos)
         prev.thumbnail((350, 622))
         st.image(prev)
+    elif video_path:
+        st.caption("Превью видео-фона")
+        st.video(video_path)
 
 # --- MAIN LOGIC ---
-if not img_path or not audio_file:
-    st.info("👈 Загрузите картинку и аудио слева, чтобы начать.")
+has_bg = img_path or video_path
+if not has_bg or not audio_file:
+    st.info("👈 Загрузите фон (фото или видео) и аудио слева, чтобы начать.")
 else:
     aud_path = os.path.join(WORK_DIR, "input_audio.mp3")
 
@@ -392,20 +408,32 @@ else:
                     generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
                                         static_text, st_font, st_size, st_color, st_pos)
 
-                    final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
-                    with Image.open(img_path) as im:
-                        im_resized = resize_to_shorts(im).convert("RGB")
-                        im_resized.save(final_img_path, quality=95)
-
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
 
-                    cmd = [
-                        "ffmpeg", "-y", "-loop", "1", "-i", final_img_path, "-i", aud_path,
-                        "-vf", f"ass={os.path.basename(ass_path)}",
-                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
-                        "FINAL_SHORT.mp4"
-                    ]
+                    if video_path:
+                        # VIDEO background
+                        vf_filter = f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={os.path.basename(ass_path)}"
+                        cmd = ["ffmpeg", "-y", "-i", video_path, "-i", aud_path]
+                        if mute_video:
+                            cmd += ["-map", "0:v", "-map", "1:a"]
+                        else:
+                            cmd += ["-filter_complex", "[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
+                                    "-map", "0:v", "-map", "[aout]"]
+                        cmd += ["-vf", vf_filter, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-shortest", "FINAL_SHORT.mp4"]
+                    else:
+                        # IMAGE background
+                        final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
+                        with Image.open(img_path) as im:
+                            im_resized = resize_to_shorts(im).convert("RGB")
+                            im_resized.save(final_img_path, quality=95)
+                        cmd = [
+                            "ffmpeg", "-y", "-loop", "1", "-i", final_img_path, "-i", aud_path,
+                            "-vf", f"ass={os.path.basename(ass_path)}",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
+                            "FINAL_SHORT.mp4"
+                        ]
 
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     process.communicate()
