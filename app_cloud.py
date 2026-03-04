@@ -431,7 +431,7 @@ else:
                                 "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
                                 "-map", "0:v", "-map", "1:a",
                                 "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}",
-                                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
+                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
                                 "FINAL_SHORT.mp4"
                             ]
                         else:
@@ -441,7 +441,7 @@ else:
                                 "-filter_complex",
                                 f"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
                                 "-map", "[vout]", "-map", "[aout]",
-                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                                 "FINAL_SHORT.mp4"
                             ]
                     else:
@@ -453,7 +453,7 @@ else:
                         cmd = [
                             "ffmpeg", "-y", "-loop", "1", "-i", final_img_path, "-i", aud_path,
                             "-vf", f"ass={ass_basename}",
-                            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest",
+                            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
                             "FINAL_SHORT.mp4"
                         ]
 
