@@ -283,7 +283,16 @@ with col1:
 with col2:
     st.subheader("2. Вид")
 
-    font = st.selectbox("Шрифт", ["DejaVuSans", "DejaVuSans-Bold", "Arial", "Impact"], index=0)
+    FONTS = [
+        "DejaVuSans", "DejaVuSans-Bold", "DejaVuSerif", "DejaVuSerif-Bold",
+        "LiberationSans-Regular", "LiberationSans-Bold",
+        "NotoSans-Regular", "NotoSans-Bold",
+        "Roboto-Regular", "Roboto-Bold",
+        "Ubuntu-Regular", "Ubuntu-Bold",
+        "OpenSans-Regular", "OpenSans-Bold",
+    ]
+
+    font = st.selectbox("Шрифт", FONTS, index=0)
     size = st.slider("Размер", 40, 150, 75)
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
 
@@ -291,7 +300,7 @@ with col2:
         static_text = st.text_area("Текст заголовка (постоянно висит)", placeholder="Например: Стихи Есенина")
         s_col1, s_col2 = st.columns(2)
         with s_col1:
-            st_font = st.selectbox("Шрифт заголовка", ["DejaVuSans", "DejaVuSans-Bold", "Arial"], index=0)
+            st_font = st.selectbox("Шрифт заголовка", FONTS, index=0)
             st_color = st.color_picker("Цвет заголовка", "#FFFF00")
         with s_col2:
             st_size = st.slider("Размер заголовка", 30, 150, 60)
