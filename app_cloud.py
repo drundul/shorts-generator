@@ -316,15 +316,26 @@ with col2:
             st_size = st.slider("Размер заголовка", 30, 150, 60)
             st_pos = st.slider("Позиция Y (0-верх, 1920-низ)", 0, 1920, 500)
 
+    # Preview with text overlay
+    preview_img_path = None
     if img_path:
-        st.caption("Превью (Прим. масштаб)")
-        prev = create_preview_image(img_path, font + ".ttf", size, offset, "ВАШ ТЕКСТ ТУТ",
+        preview_img_path = img_path
+    elif video_path:
+        # Extract a frame from video for preview
+        frame_path = os.path.join(WORK_DIR, "preview_frame.jpg")
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path, "-ss", "1", "-frames:v", "1",
+            "-q:v", "2", frame_path
+        ], capture_output=True)
+        if os.path.exists(frame_path):
+            preview_img_path = frame_path
+
+    if preview_img_path:
+        st.caption("Превью текста на фоне")
+        prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ВАШ ТЕКСТ ТУТ",
                                     static_text, st_font + ".ttf", st_size, st_color, st_pos)
         prev.thumbnail((350, 622))
         st.image(prev)
-    elif video_path:
-        st.caption("Превью видео-фона")
-        st.video(video_path)
 
 # --- MAIN LOGIC ---
 has_bg = img_path or video_path
