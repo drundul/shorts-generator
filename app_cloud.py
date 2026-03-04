@@ -429,7 +429,7 @@ else:
                             # Simple: take video, replace audio with our track
                             cmd = [
                                 "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                "-map", "0:v", "-map", "1:a",
+                                "-map", "0:v:0", "-map", "1:a",
                                 "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}",
                                 "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
                                 "FINAL_SHORT.mp4"
