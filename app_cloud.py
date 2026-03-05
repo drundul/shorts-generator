@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import numpy as np
 import pandas as pd
 import tempfile
+import re
 
 # ========================
 # AUTH: Password Gate
@@ -247,6 +248,28 @@ def generate_srt_string(words):
         lines.append(f"{i}\n{line_start} --> {line_end}\n{text}\n")
     return "\n".join(lines)
 
+def parse_srt_content(srt_text):
+    blocks = re.split(r'\n\s*\n', srt_text.strip())
+    words_data = []
+    
+    def time_to_sec(t):
+        t = t.strip()
+        h, m, s_ms = t.split(':')
+        s, ms = s_ms.replace('.', ',').split(',')
+        return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000.0
+        
+    for block in blocks:
+        lines = block.strip().split('\n')
+        if len(lines) >= 3:
+            time_line = lines[1]
+            if '-->' in time_line:
+                start_str, end_str = time_line.split('-->')
+                start_sec = time_to_sec(start_str)
+                end_sec = time_to_sec(end_str)
+                text = " ".join(lines[2:]).strip()
+                words_data.append({"start": start_sec, "end": end_sec, "word": text})
+    return words_data
+
 # --- FUNC: PREVIEW ---
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
@@ -379,7 +402,7 @@ with col1:
                                     placeholder="Вставьте сюда текст песни, чтобы нейросеть знала слова заранее...",
                                     height=100)
 
-    csv_file = st.file_uploader("📝 Субтитры (CSV, если есть)", type=['csv'])
+    subs_file = st.file_uploader("📝 Предзагруженные субтитры (SRT или CSV)", type=['csv', 'srt'])
 
 with col2:
     st.subheader("2. Вид")
@@ -462,20 +485,28 @@ else:
 
     st.divider()
 
-    if csv_file:
+    if subs_file:
         try:
-            df = pd.read_csv(csv_file)
-            df.columns = df.columns.str.strip()
-            required = {'start', 'end', 'word'}
-            if required.issubset(df.columns) and st.session_state.get("words_data") is None:
-                st.session_state["words_data"] = df.to_dict('records')
-                st.success(f"✅ Субтитры загружены из {csv_file.name}")
-                st.rerun()
+            if subs_file.name.endswith('.csv'):
+                df = pd.read_csv(subs_file)
+                df.columns = df.columns.str.strip()
+                required = {'start', 'end', 'word'}
+                if required.issubset(df.columns) and st.session_state.get("words_data") is None:
+                    st.session_state["words_data"] = df.to_dict('records')
+                    st.success(f"✅ Субтитры загружены из {subs_file.name}")
+                    st.rerun()
+            elif subs_file.name.endswith('.srt'):
+                if st.session_state.get("words_data") is None:
+                    srt_text = subs_file.getvalue().decode('utf-8')
+                    st.session_state["words_data"] = parse_srt_content(srt_text)
+                    st.success(f"✅ Субтитры загружены из {subs_file.name}")
+                    st.rerun()
         except Exception as e:
-            st.error(f"Ошибка CSV: {e}")
+            st.error(f"Ошибка чтения субтитров: {e}")
 
     if st.session_state.get("words_data") is None:
-        if st.button("🎧 1. РАСПОЗНАТЬ ТЕКСТ (Whisper)", type="primary"):
+        button_text = "🎧 1. РАСПОЗНАТЬ ИЗ АУДИО (Whisper)" if audio_file else "🎥 1. РАСПОЗНАТЬ ИЗ ВИДЕО (Whisper)"
+        if st.button(button_text, type="primary"):
             with st.spinner("Слушаю аудио..."):
                 try:
                     target_audio = aud_path
