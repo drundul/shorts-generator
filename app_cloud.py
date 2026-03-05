@@ -189,7 +189,7 @@ def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words
 ScriptType: v4.00+
 PlayResX: {width}
 PlayResY: {height}
-WrapStyle: 0 
+WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -261,7 +261,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ass_end = time_to_ass_format(line_end)
 
             text_line = ""
-            for w_obj in chunk:
+            mid = (len(chunk) + 1) // 2  # split into 2 lines
+            for idx, w_obj in enumerate(chunk):
                 w_text = w_obj['word']
                 if uppercase:
                     w_text = w_text.upper()
@@ -274,6 +275,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     f"{w_text} "
                 )
                 text_line += effect
+                # Insert line break after midpoint for 2-line layout
+                if idx == mid - 1 and len(chunk) > 3:
+                    text_line += "\\N"
 
             full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line}"
             events.append(full_line)
@@ -625,7 +629,7 @@ else:
 
                     st.write("Генерация субтитров...")
                     ass_path = os.path.join(OUTPUT_DIR, "subs.ass")
-                    generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
+                    generate_karaoke_ass(words_sorted, ass_path, font, size, 6, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
                                         base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
                                         width=vid_w, height=vid_h, sub_style=sub_style)
