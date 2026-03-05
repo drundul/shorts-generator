@@ -146,7 +146,8 @@ def hex_to_ass_color(hex_str):
 
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920):
+                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920,
+                         sub_style="karaoke"):
     center_y = int(height/2 + offset_y)
     center_x = int(width/2)
     base_color = hex_to_ass_color(base_color_hex)
@@ -174,47 +175,77 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         static_event = f"Dialogue: 0,0:00:00.00,1:00:00.00,StaticStyle,,0,0,0,,{{\\pos({center_x},{static_pos_y})}}{formatted_static}"
         events.append(static_event)
 
-    chunks = []
-    current_chunk = []
-
-    for w in words:
-        txt = str(w.get('word', ''))
-        is_capital = txt[0].isupper() if txt else False
-
-        if len(current_chunk) >= max_words_per_screen or (is_capital and len(current_chunk) > 0):
-            chunks.append(current_chunk)
-            current_chunk = []
-
-        current_chunk.append(w)
-
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    for chunk in chunks:
-        if not chunk: continue
-        line_start = chunk[0]['start']
-        line_end = chunk[-1]['end'] + 0.2
-
-        ass_start = time_to_ass_format(line_start)
-        ass_end = time_to_ass_format(line_end)
-
-        text_line = ""
-        for w_obj in chunk:
-            w_text = w_obj['word']
+    # === MODE: ONE WORD AT A TIME ===
+    if sub_style == "one_word":
+        for w_obj in words:
+            w_text = str(w_obj.get('word', '')).strip()
             if uppercase:
                 w_text = w_text.upper()
-            rel_start = int((w_obj['start'] - line_start) * 1000)
-            rel_end = int((w_obj['end'] - line_start) * 1000)
+            if not w_text:
+                continue
+            ass_start = time_to_ass_format(w_obj['start'])
+            ass_end = time_to_ass_format(w_obj['end'])
+            line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(50,50)\\pos({center_x},{center_y})}}{w_text}"
+            events.append(line)
 
-            effect = (
-                f"{{\\1c{base_color}\\t({rel_start},{rel_start+1},\\1c{highlight_color})}}"
-                f"{{\\t({rel_end},{rel_end+1},\\1c{base_color})}}"
-                f"{w_text} "
-            )
-            text_line += effect
+    # === MODE: CLASSIC SUBTITLES (show/hide blocks) ===
+    elif sub_style == "classic":
+        for w_obj in words:
+            w_text = str(w_obj.get('word', '')).strip()
+            if uppercase:
+                w_text = w_text.upper()
+            if not w_text:
+                continue
+            # Replace newlines for ASS format
+            w_text = w_text.replace("\n", "\\N")
+            ass_start = time_to_ass_format(w_obj['start'])
+            ass_end = time_to_ass_format(w_obj['end'])
+            line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{w_text}"
+            events.append(line)
 
-        full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line}"
-        events.append(full_line)
+    # === MODE: KARAOKE (word-by-word highlight in groups) ===
+    else:
+        chunks = []
+        current_chunk = []
+
+        for w in words:
+            txt = str(w.get('word', ''))
+            is_capital = txt[0].isupper() if txt else False
+
+            if len(current_chunk) >= max_words_per_screen or (is_capital and len(current_chunk) > 0):
+                chunks.append(current_chunk)
+                current_chunk = []
+
+            current_chunk.append(w)
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        for chunk in chunks:
+            if not chunk: continue
+            line_start = chunk[0]['start']
+            line_end = chunk[-1]['end'] + 0.2
+
+            ass_start = time_to_ass_format(line_start)
+            ass_end = time_to_ass_format(line_end)
+
+            text_line = ""
+            for w_obj in chunk:
+                w_text = w_obj['word']
+                if uppercase:
+                    w_text = w_text.upper()
+                rel_start = int((w_obj['start'] - line_start) * 1000)
+                rel_end = int((w_obj['end'] - line_start) * 1000)
+
+                effect = (
+                    f"{{\\1c{base_color}\\t({rel_start},{rel_start+1},\\1c{highlight_color})}}"
+                    f"{{\\t({rel_end},{rel_end+1},\\1c{base_color})}}"
+                    f"{w_text} "
+                )
+                text_line += effect
+
+            full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line}"
+            events.append(full_line)
 
     with open(output_ass_path, "w", encoding="utf-8-sig") as f:
         f.write(header + "\n".join(events))
@@ -422,6 +453,11 @@ with col2:
     with c2:
         highlight_hex = st.color_picker("🎯 Цвет подсветки", "#FFFF00")
     uppercase_cb = st.checkbox("АБВ Весь текст заглавными (CAPS LOCK)", value=False)
+
+    STYLES_MAP = {"🎤 Караоке (подсветка слов)": "karaoke", "💬 По 1 слову (TikTok)": "one_word", "📺 Классические субтитры": "classic"}
+    sub_style_label = st.selectbox("Стиль субтитров", list(STYLES_MAP.keys()), index=0)
+    sub_style = STYLES_MAP[sub_style_label]
+
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
 
     with st.expander("📌 Настройки заголовка (Статичный текст)", expanded=False):
@@ -561,7 +597,7 @@ else:
                     generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
                                         base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
-                                        width=vid_w, height=vid_h)
+                                        width=vid_w, height=vid_h, sub_style=sub_style)
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
