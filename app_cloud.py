@@ -47,15 +47,19 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", ""))
 
 # --- FUNC: SMART RESIZE ---
-def resize_to_shorts(image):
-    return ImageOps.fit(image, (1080, 1920), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+def resize_to_video(image, width=1080, height=1920):
+    return ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
 # --- FUNC: CREATE OVERLAY ---
-def ensure_overlay_exists():
+def ensure_overlay_exists(width=1080, height=1920):
+    # Only create/use overlay for vertical shorts right now
+    if width != 1080 or height != 1920:
+        return ""
+    
     if os.path.exists(OVERLAY_PATH):
-        return
+        return OVERLAY_PATH
     os.makedirs(ASSETS_DIR, exist_ok=True)
-    W, H = 1080, 1920
+    W, H = width, height
     img = Image.new('RGBA', (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
@@ -75,6 +79,7 @@ def ensure_overlay_exists():
     draw.rectangle([0, H - 10, W, H], fill=(255, 0, 0, 255))
 
     img.save(OVERLAY_PATH)
+    return OVERLAY_PATH
 
 # --- FUNC: WHISPER & ASS ---
 def time_to_ass_format(seconds):
@@ -140,16 +145,17 @@ def hex_to_ass_color(hex_str):
 
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False):
-    center_y = int(960 + offset_y)
+                         base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920):
+    center_y = int(height/2 + offset_y)
+    center_x = int(width/2)
     base_color = hex_to_ass_color(base_color_hex)
     highlight_color = hex_to_ass_color(highlight_color_hex)
     ass_static_color = hex_to_ass_color(static_color)
 
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: {width}
+PlayResY: {height}
 WrapStyle: 0 
 
 [V4+ Styles]
@@ -164,7 +170,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     if static_text:
         formatted_static = static_text.replace("\n", "\\N")
-        static_event = f"Dialogue: 0,0:00:00.00,1:00:00.00,StaticStyle,,0,0,0,,{{\\pos(540,{static_pos_y})}}{formatted_static}"
+        static_event = f"Dialogue: 0,0:00:00.00,1:00:00.00,StaticStyle,,0,0,0,,{{\\pos({center_x},{static_pos_y})}}{formatted_static}"
         events.append(static_event)
 
     chunks = []
@@ -206,7 +212,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             )
             text_line += effect
 
-        full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos(540,{center_y})}}{text_line}"
+        full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line}"
         events.append(full_line)
 
     with open(output_ass_path, "w", encoding="utf-8-sig") as f:
@@ -244,9 +250,9 @@ def generate_srt_string(words):
 # --- FUNC: PREVIEW ---
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         base_color_hex="#FFFFFF", uppercase_text=False):
+                         base_color_hex="#FFFFFF", uppercase_text=False, width=1080, height=1920):
     bg = Image.open(bg_image_path).convert("RGBA")
-    bg = resize_to_shorts(bg)
+    bg = resize_to_video(bg, width, height)
 
     if uppercase_text:
         text_sample = text_sample.upper()
@@ -273,7 +279,7 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
 
         bbox = d.multiline_textbbox((0, 0), text, font=font, align="center")
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        x = (1080 - w) / 2
+        x = (width - w) / 2
         y = center_y_pos - (h / 2)
 
         d.multiline_text((x + 4, y + 4), text, font=font, fill=(0, 0, 0, 180), align="center")
@@ -285,7 +291,7 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
     else:
         rgb_base = (255, 255, 255, 255)
 
-    dyn_y = (1920 / 2) + offset_y
+    dyn_y = (height / 2) + offset_y
     draw_centered(text_sample, dyn_y, font_name, font_size, color=rgb_base)
 
     if static_text:
@@ -298,9 +304,9 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
 
     combined = Image.alpha_composite(bg, txt_layer)
 
-    ensure_overlay_exists()
-    if os.path.exists(OVERLAY_PATH):
-        overlay = Image.open(OVERLAY_PATH).convert("RGBA")
+    overlay_img_path = ensure_overlay_exists(width, height)
+    if overlay_img_path and os.path.exists(overlay_img_path):
+        overlay = Image.open(overlay_img_path).convert("RGBA")
         combined = Image.alpha_composite(combined, overlay)
 
     return combined
@@ -336,6 +342,12 @@ col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("1. Файлы")
+
+    orientation = st.radio("Формат видео:", ["📱 Вертикальное 9:16 (Shorts, Reels)", "🖥️ Горизонтальное 16:9 (YouTube)"], horizontal=True)
+    if "🖥" in orientation:
+        vid_w, vid_h = 1920, 1080
+    else:
+        vid_w, vid_h = 1080, 1920
 
     bg_type = st.radio("Тип фона:", ["📷 Фото", "🎥 Видео"], horizontal=True)
     img_path = None
@@ -397,7 +409,7 @@ with col2:
             st_color = st.color_picker("Цвет заголовка", "#FFFF00")
         with s_col2:
             st_size = st.slider("Размер заголовка", 30, 150, 60)
-            st_pos = st.slider("Позиция Y (0-верх, 1920-низ)", 0, 1920, 500)
+            st_pos = st.slider(f"Позиция Y (0-верх, {vid_h}-низ)", 0, vid_h, int(vid_h/4))
 
     # Preview with text overlay
     preview_img_path = None
@@ -417,8 +429,10 @@ with col2:
         st.caption("Превью текста на фоне")
         prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ваш текст\nтут смотрится так",
                                     static_text, st_font + ".ttf", st_size, st_color, st_pos,
-                                    base_color_hex=base_hex, uppercase_text=uppercase_cb)
-        prev.thumbnail((350, 622))
+                                    base_color_hex=base_hex, uppercase_text=uppercase_cb, width=vid_w, height=vid_h)
+        # Scale preview to fit Streamlit column nicely
+        prev_ratio = vid_w / vid_h
+        prev.thumbnail((350, int(350 / prev_ratio)))
         st.image(prev)
 
 # --- MAIN LOGIC ---
@@ -515,7 +529,8 @@ else:
                     ass_path = os.path.join(OUTPUT_DIR, "subs.ass")
                     generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
-                                        base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb)
+                                        base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
+                                        width=vid_w, height=vid_h)
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
@@ -523,12 +538,12 @@ else:
 
                     if video_path:
                         if video_scale == "Размытый фон":
-                            base_vf = f"[0:v:0]split[a][b];[a]scale=1080:1920,boxblur=20:20[1];[b]scale=1080:1920:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}[vout]"
+                            base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}[vout]"
                         elif video_scale == "Обрезать (Без краев)":
-                            base_vf = f"[0:v:0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,ass={ass_basename}[vout]"
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h},ass={ass_basename}[vout]"
                         else:
                             # Вписать (Черные края)
-                            base_vf = f"[0:v:0]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout]"
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout]"
 
                         if mute_video:
                             cmd = [
@@ -552,7 +567,7 @@ else:
                         # IMAGE background
                         final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
                         with Image.open(img_path) as im:
-                            im_resized = resize_to_shorts(im).convert("RGB")
+                            im_resized = resize_to_video(im, width=vid_w, height=vid_h).convert("RGB")
                             im_resized.save(final_img_path, quality=95)
                         cmd = [
                             "ffmpeg", "-y", "-loop", "1", "-i", final_img_path, "-i", aud_path,
