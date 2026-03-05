@@ -144,10 +144,41 @@ def hex_to_ass_color(hex_str):
         return f"&H00{b}{g}{r}"
     return "&H00FFFFFF"
 
+def split_phrases_to_words(words):
+    """
+    Если элементы содержат пробелы (фразы из SRT), разбивает их на отдельные слова
+    с пропорциональным распределением тайминга по количеству символов.
+    """
+    result = []
+    for entry in words:
+        text = str(entry.get('word', '')).strip()
+        parts = text.split()
+        if len(parts) <= 1:
+            result.append(entry)
+            continue
+        # Distribute timing proportionally by character count
+        start = float(entry['start'])
+        end = float(entry['end'])
+        total_dur = end - start
+        total_chars = sum(len(p) for p in parts)
+        if total_chars == 0:
+            result.append(entry)
+            continue
+        cursor = start
+        for p in parts:
+            word_dur = total_dur * (len(p) / total_chars)
+            result.append({"start": round(cursor, 3), "end": round(cursor + word_dur, 3), "word": p})
+            cursor += word_dur
+    return result
+
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920,
                          sub_style="karaoke"):
+    # For karaoke and one_word modes, split phrases into individual words
+    if sub_style in ("karaoke", "one_word"):
+        words = split_phrases_to_words(words)
+
     center_y = int(height/2 + offset_y)
     center_x = int(width/2)
     base_color = hex_to_ass_color(base_color_hex)
