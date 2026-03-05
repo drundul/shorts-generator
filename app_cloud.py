@@ -212,6 +212,35 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open(output_ass_path, "w", encoding="utf-8-sig") as f:
         f.write(header + "\n".join(events))
 
+def generate_srt_string(words):
+    def format_srt_time(seconds):
+        td = timedelta(seconds=seconds)
+        hours, remainder = divmod(td.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        milliseconds = td.microseconds // 1000
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
+    
+    lines = []
+    chunks = []
+    current_chunk = []
+    for w in words:
+        txt = str(w.get('word', ''))
+        is_capital = txt[0].isupper() if txt else False
+        if len(current_chunk) >= 4 or (is_capital and len(current_chunk) > 0):
+            chunks.append(current_chunk)
+            current_chunk = []
+        current_chunk.append(w)
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    for i, chunk in enumerate(chunks, 1):
+        if not chunk: continue
+        line_start = format_srt_time(chunk[0]['start'])
+        line_end = format_srt_time(chunk[-1]['end'])
+        text = " ".join([str(w['word']).strip() for w in chunk])
+        lines.append(f"{i}\n{line_start} --> {line_end}\n{text}\n")
+    return "\n".join(lines)
+
 # --- FUNC: PREVIEW ---
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
@@ -319,6 +348,7 @@ with col1:
             img_path = os.path.join(WORK_DIR, "uploaded_bg.png")
             with open(img_path, "wb") as f:
                 f.write(uploaded_img.getbuffer())
+        video_scale = "Вписать (Черные края)" # default for logic
     else:
         uploaded_vid = st.file_uploader("🎥 Загрузить видео (вертикальное)", type=['mp4', 'mov', 'webm'])
         if uploaded_vid:
@@ -326,8 +356,9 @@ with col1:
             with open(video_path, "wb") as f:
                 f.write(uploaded_vid.getbuffer())
         mute_video = st.checkbox("🔇 Убрать оригинальный звук из видео", value=True)
+        video_scale = st.radio("Масштаб видео:", ["Обрезать (Без краев)", "Вписать (Черные края)", "Размытый фон"])
 
-    audio_file = st.file_uploader("🎵 Аудио (Обязательно)", type=['mp3', 'wav', 'm4a'])
+    audio_file = st.file_uploader("🎵 Аудио (Опционально, если есть видео)", type=['mp3', 'wav', 'm4a'])
 
     with st.expander("🎤 Улучшить распознавание (Сложные песни)", expanded=False):
         voice_file = st.file_uploader("Чистый голос (без музыки)", type=['mp3', 'wav', 'm4a'],
@@ -392,16 +423,28 @@ with col2:
 
 # --- MAIN LOGIC ---
 has_bg = img_path or video_path
-if not has_bg or not audio_file:
-    st.info("👈 Загрузите фон (фото или видео) и аудио слева, чтобы начать.")
+if not has_bg and not audio_file:
+    st.info("👈 Загрузите фон (фото или видео) слева, чтобы начать.")
+elif not audio_file and not video_path:
+    st.warning("👈 Загрузите либо отдельное аудио, либо видео со звуком.")
 else:
     aud_path = os.path.join(WORK_DIR, "input_audio.mp3")
 
-    if "current_audio_name" not in st.session_state or st.session_state["current_audio_name"] != audio_file.name:
+    current_audio_name = audio_file.name if audio_file else (uploaded_vid.name if video_path else "unknown")
+
+    if "current_audio_name" not in st.session_state or st.session_state["current_audio_name"] != current_audio_name:
         st.session_state["words_data"] = None
-        st.session_state["current_audio_name"] = audio_file.name
-        with open(aud_path, "wb") as f:
-            f.write(audio_file.getbuffer())
+        st.session_state["current_audio_name"] = current_audio_name
+        
+        if audio_file:
+            with open(aud_path, "wb") as f:
+                f.write(audio_file.getbuffer())
+        elif video_path:
+            with st.spinner("Извлекаем звук из видео..."):
+                subprocess.run(["ffmpeg", "-y", "-i", video_path, "-q:a", "0", "-map", "a", aud_path], capture_output=True)
+                if not os.path.exists(aud_path):
+                    st.error("В этом видео нет звука (или не удалось извлечь)! Пожалуйста, загрузите отдельный аудио файл.")
+                    st.stop()
 
     st.divider()
 
@@ -458,6 +501,9 @@ else:
                 st.session_state["words_data"] = sorted(st.session_state["words_data"], key=lambda x: x.get('start', 0))
                 st.rerun()
 
+        srt_content = generate_srt_string(st.session_state["words_data"])
+        st.download_button("📝 Скачать субтитры (.srt)", data=srt_content.encode("utf-8"), file_name="subtitles.srt", mime="text/plain")
+
         st.divider()
 
         if st.button("🎬 3. СОЗДАТЬ ВИДЕО (РЕНДЕР)", type="primary"):
@@ -476,13 +522,19 @@ else:
                     ass_basename = os.path.basename(ass_path)
 
                     if video_path:
-                        # VIDEO background
+                        if video_scale == "Размытый фон":
+                            base_vf = f"[0:v:0]split[a][b];[a]scale=1080:1920,boxblur=20:20[1];[b]scale=1080:1920:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}[vout]"
+                        elif video_scale == "Обрезать (Без краев)":
+                            base_vf = f"[0:v:0]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,ass={ass_basename}[vout]"
+                        else:
+                            # Вписать (Черные края)
+                            base_vf = f"[0:v:0]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout]"
+
                         if mute_video:
-                            # Simple: take video, replace audio with our track
                             cmd = [
                                 "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                "-map", "0:v:0", "-map", "1:a",
-                                "-vf", f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}",
+                                "-filter_complex", base_vf,
+                                "-map", "[vout]", "-map", "1:a",
                                 "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
                                 "FINAL_SHORT.mp4"
                             ]
@@ -491,7 +543,7 @@ else:
                             cmd = [
                                 "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
                                 "-filter_complex",
-                                f"[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
+                                f"{base_vf};[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
                                 "-map", "[vout]", "-map", "[aout]",
                                 "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                                 "FINAL_SHORT.mp4"
