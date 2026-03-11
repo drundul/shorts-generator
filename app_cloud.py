@@ -175,8 +175,8 @@ def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920,
                          sub_style="karaoke"):
-    # For karaoke and one_word modes, split phrases into individual words
-    if sub_style in ("karaoke", "one_word"):
+    # For karaoke, one_word and box modes, split phrases into individual words
+    if sub_style in ("karaoke", "one_word", "box"):
         words = split_phrases_to_words(words)
 
     center_y = int(height/2 + offset_y)
@@ -194,6 +194,7 @@ WrapStyle: 0
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: BaseStyle,{font_name},{font_size},{base_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,5,50,50,0,1
+Style: BoxStyle,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,{highlight_color},&H00000000,-1,0,0,0,100,100,0,0,3,12,0,5,50,50,0,1
 Style: StaticStyle,{static_font},{static_size},{ass_static_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,5,50,50,0,1
 
 [Events]
@@ -234,8 +235,49 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{w_text}"
             events.append(line)
 
+    # === MODE: BOX HIGHLIGHT (colored box behind active word) ===
+    elif sub_style == "box":
+        chunks = []
+        current_chunk = []
+        for w in words:
+            txt = str(w.get('word', ''))
+            is_capital = txt[0].isupper() if txt else False
+            if len(current_chunk) >= max_words_per_screen or (is_capital and len(current_chunk) > 0):
+                chunks.append(current_chunk)
+                current_chunk = []
+            current_chunk.append(w)
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        for chunk in chunks:
+            if not chunk: continue
+            line_start = chunk[0]['start']
+            line_end = chunk[-1]['end'] + 0.2
+            ass_start = time_to_ass_format(line_start)
+            ass_end = time_to_ass_format(line_end)
+
+            # Layer 0: all words in white (base text)
+            base_text = ""
+            for w_obj in chunk:
+                w_text = w_obj['word']
+                if uppercase:
+                    w_text = w_text.upper()
+                base_text += f"{w_text} "
+            base_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{base_text.strip()}"
+            events.append(base_line)
+
+            # Layer 1: each word gets a box highlight during its time
+            for w_obj in chunk:
+                w_text = w_obj['word']
+                if uppercase:
+                    w_text = w_text.upper()
+                w_start = time_to_ass_format(w_obj['start'])
+                w_end = time_to_ass_format(w_obj['end'])
+                box_line = f"Dialogue: 1,{w_start},{w_end},BoxStyle,,0,0,0,,{{\\pos({center_x},{center_y})}}{w_text}"
+                events.append(box_line)
+
     # === MODE: KARAOKE (word-by-word highlight in groups) ===
-    else:
+    elif sub_style == "karaoke":
         chunks = []
         current_chunk = []
 
@@ -485,7 +527,7 @@ with col2:
         highlight_hex = st.color_picker("🎯 Цвет подсветки", "#FFFF00")
     uppercase_cb = st.checkbox("АБВ Весь текст заглавными (CAPS LOCK)", value=False)
 
-    STYLES_MAP = {"🎤 Караоке (подсветка слов)": "karaoke", "💬 По 1 слову (TikTok)": "one_word", "📺 Классические субтитры": "classic"}
+    STYLES_MAP = {"🎤 Караоке (подсветка слов)": "karaoke", "💬 По 1 слову (TikTok)": "one_word", "🟩 Бокс-подсветка": "box", "📺 Классические субтитры": "classic"}
     sub_style_label = st.selectbox("Стиль субтитров", list(STYLES_MAP.keys()), index=0)
     sub_style = STYLES_MAP[sub_style_label]
 
