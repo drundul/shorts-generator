@@ -256,25 +256,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ass_start = time_to_ass_format(line_start)
             ass_end = time_to_ass_format(line_end)
 
-            # Layer 0: all words in white (base text)
-            base_text = ""
+            text_line = ""
             for w_obj in chunk:
                 w_text = w_obj['word']
                 if uppercase:
                     w_text = w_text.upper()
-                base_text += f"{w_text} "
-            base_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{base_text.strip()}"
-            events.append(base_line)
+                rel_start = int((w_obj['start'] - line_start) * 1000)
+                rel_end = int((w_obj['end'] - line_start) * 1000)
 
-            # Layer 1: each word gets a box highlight during its time
-            for w_obj in chunk:
-                w_text = w_obj['word']
-                if uppercase:
-                    w_text = w_text.upper()
-                w_start = time_to_ass_format(w_obj['start'])
-                w_end = time_to_ass_format(w_obj['end'])
-                box_line = f"Dialogue: 1,{w_start},{w_end},BoxStyle,,0,0,0,,{{\\pos({center_x},{center_y})}}{w_text}"
-                events.append(box_line)
+                # Explicitly manage base state and transition border thickness and color mid-flight
+                # \bord16 creates a thick outline representing a box pill behind the text.
+                effect = (
+                    f"{{\\bord3\\3c&H00000000}}"
+                    f"{{\\t({rel_start},{rel_start+1},\\bord16\\3c{highlight_color})}}"
+                    f"{{\\t({rel_end},{rel_end+1},\\bord3\\3c&H00000000)}}"
+                    f"{w_text} "
+                )
+                text_line += effect
+
+            full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line.strip()}"
+            events.append(full_line)
 
     # === MODE: KARAOKE (word-by-word highlight in groups) ===
     elif sub_style == "karaoke":
