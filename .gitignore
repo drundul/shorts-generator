@@ -29,3 +29,6 @@ Thumbs.db
 
 # CSV exports
 *.csv
+
+# Secrets (local only, never commit!)
+.streamlit/secrets.toml

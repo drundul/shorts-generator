@@ -529,8 +529,14 @@ with col2:
     uppercase_cb = st.checkbox("АБВ Весь текст заглавными (CAPS LOCK)", value=False)
 
     STYLES_MAP = {"🎤 Караоке (подсветка слов)": "karaoke", "💬 По 1 слову (TikTok)": "one_word", "🟩 Бокс-подсветка": "box", "📺 Классические субтитры": "classic"}
-    sub_style_label = st.selectbox("Стиль субтитров", list(STYLES_MAP.keys()), index=0)
-    sub_style = STYLES_MAP[sub_style_label]
+
+    no_subs = st.checkbox("🚫 Без субтитров (только аудио на фоне)", value=False,
+                          help="Режим для подкастов: фото/видео + аудио без распознавания речи")
+    if not no_subs:
+        sub_style_label = st.selectbox("Стиль субтитров", list(STYLES_MAP.keys()), index=0)
+        sub_style = STYLES_MAP[sub_style_label]
+    else:
+        sub_style = "karaoke"  # не используется в режиме без субтитров
 
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
 
@@ -595,6 +601,114 @@ else:
 
     st.divider()
 
+    # ============================
+    # РЕЖИМ БЕЗ СУБТИТРОВ
+    # ============================
+    if no_subs:
+        if st.button("🎬 СОЗДАТЬ ВИДЕО (без субтитров)", type="primary"):
+            with st.status("Создание видео...", expanded=True):
+                try:
+                    out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
+                    st.write("Подготовка файлов...")
+
+                    if video_path:
+                        if video_scale == "Размытый фон":
+                            vf_complex = (
+                                f"[0:v:0]split[a][b];"
+                                f"[a]scale={vid_w}:{vid_h},boxblur=20:20[bg];"
+                                f"[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[fg];"
+                                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
+                            )
+                            if mute_video:
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                    "-filter_complex", vf_complex,
+                                    "-map", "[vout]", "-map", "1:a",
+                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
+                                    "FINAL_SHORT.mp4"
+                                ]
+                            else:
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                    "-filter_complex", vf_complex + ";[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
+                                    "-map", "[vout]", "-map", "[aout]",
+                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                    "FINAL_SHORT.mp4"
+                                ]
+                        elif video_scale == "Обрезать (Без краев)":
+                            vf = f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h}"
+                            if mute_video:
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                    "-vf", vf, "-map", "0:v:0", "-map", "1:a",
+                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
+                                    "FINAL_SHORT.mp4"
+                                ]
+                            else:
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                    "-filter_complex", f"[0:v:0]{vf}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
+                                    "-map", "[vout]", "-map", "[aout]",
+                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                    "FINAL_SHORT.mp4"
+                                ]
+                        else:  # Вписать (Черные края)
+                            vf = f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2"
+                            if mute_video:
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                    "-vf", vf, "-map", "0:v:0", "-map", "1:a",
+                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
+                                    "FINAL_SHORT.mp4"
+                                ]
+                            else:
+                                cmd = [
+                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                                    "-filter_complex", f"[0:v:0]{vf}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
+                                    "-map", "[vout]", "-map", "[aout]",
+                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                    "FINAL_SHORT.mp4"
+                                ]
+                    else:
+                        # IMAGE background
+                        final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
+                        with Image.open(img_path) as im:
+                            im_resized = resize_to_video(im, width=vid_w, height=vid_h).convert("RGB")
+                            im_resized.save(final_img_path, quality=95)
+                        # Получаем точную длительность аудио через ffprobe
+                        # (вместо -shortest, который добавляет 2-3 сек буферных кадров)
+                        probe = subprocess.run(
+                            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                             "-of", "default=noprint_wrappers=1:nokey=1", aud_path],
+                            capture_output=True, text=True
+                        )
+                        audio_dur = probe.stdout.strip() or "0"
+                        cmd = [
+                            "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
+                            "-i", final_img_path, "-i", aud_path,
+                            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                            "FINAL_SHORT.mp4"
+                        ]
+
+                    st.write("Склейка (FFmpeg)...")
+                    process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    stdout, stderr = process.communicate()
+
+                    if process.returncode == 0:
+                        st.success("ГОТОВО!")
+                        st.balloons()
+                        with open(out_file, "rb") as f:
+                            st.download_button("📩 Скачать файл", f, "FINAL_SHORT.mp4")
+                    else:
+                        st.error("Ошибка при рендере FFmpeg")
+                        st.code(stderr.decode("utf-8", errors="ignore")[-1500:], language="text")
+                except Exception as e:
+                    st.error(f"Ошибка: {e}")
+        st.stop()  # не показываем блок Whisper/редактора субтитров
+
+    # ============================
+    # РЕЖИМ С СУБТИТРАМИ (Whisper)
+    # ============================
     if subs_file:
         try:
             if subs_file.name.endswith('.csv'):
