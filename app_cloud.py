@@ -416,7 +416,8 @@ def parse_srt_content(srt_text):
 # --- FUNC: PREVIEW ---
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
-                         base_color_hex="#FFFFFF", uppercase_text=False, width=1080, height=1920):
+                         base_color_hex="#FFFFFF", uppercase_text=False, width=1080, height=1920,
+                         no_subs=False, viz_style="none", viz_h=250, viz_margin=0, viz_color_hex="#FFFFFF"):
     bg = Image.open(bg_image_path).convert("RGBA")
     bg = resize_to_video(bg, width, height)
 
@@ -458,7 +459,8 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
         rgb_base = (255, 255, 255, 255)
 
     dyn_y = (height / 2) + offset_y
-    draw_centered(text_sample, dyn_y, font_name, font_size, color=rgb_base)
+    if not no_subs:
+        draw_centered(text_sample, dyn_y, font_name, font_size, color=rgb_base)
 
     if static_text:
         if static_color.startswith('#'):
@@ -467,6 +469,24 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
         else:
             rgb = (255, 255, 255, 255)
         draw_centered(static_text, static_pos_y, static_font, static_size, color=rgb)
+
+    if viz_style != "none":
+        viz_y = height - viz_h - viz_margin
+        v_h_hex = viz_color_hex.lstrip('#')
+        if len(v_h_hex) == 6:
+            v_rgb = tuple(int(v_h_hex[i:i + 2], 16) for i in (0, 2, 4))
+        else:
+            v_rgb = (255, 255, 255)
+            
+        # Рисуем полупрозрачную плашку визуализатора
+        d.rectangle([0, viz_y, width, viz_y + viz_h], fill=v_rgb + (80,))
+        
+        # Подпись
+        try:
+            fnt = ImageFont.truetype("Arial", 40)
+        except:
+            fnt = ImageFont.load_default()
+        d.text((40, viz_y + 20), f"🎵 ЭФФЕКТ: {viz_style}", font=fnt, fill=(255,255,255,255))
 
     combined = Image.alpha_composite(bg, txt_layer)
 
@@ -627,7 +647,8 @@ with col2:
         st.caption("Превью текста на фоне")
         prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ваш текст\nтут смотрится так",
                                     static_text, st_font + ".ttf", st_size, st_color, st_pos,
-                                    base_color_hex=base_hex, uppercase_text=uppercase_cb, width=vid_w, height=vid_h)
+                                    base_color_hex=base_hex, uppercase_text=uppercase_cb, width=vid_w, height=vid_h,
+                                    no_subs=no_subs, viz_style=viz_style, viz_h=viz_h, viz_margin=viz_margin, viz_color_hex=viz_color)
         # Scale preview to fit Streamlit column nicely
         prev_ratio = vid_w / vid_h
         prev.thumbnail((350, int(350 / prev_ratio)))
