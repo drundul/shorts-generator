@@ -171,6 +171,44 @@ def split_phrases_to_words(words):
             cursor += word_dur
     return result
 
+# --- FUNC: AUDIO VISUALIZER ---
+def build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color_hex):
+    """
+    Возвращает (viz_part, overlay_part) — части filter_complex для аудио-визуализатора.
+    viz_part: фильтр извлечения аудио-данных -> [viz]
+    overlay_part: наложение [viz] на [bg] -> [v_out_label]
+    """
+    color = viz_color_hex.lstrip('#')
+    y_pos = vid_h - viz_h - viz_margin
+
+    if viz_style == "bars":
+        viz = f"[1:a]showfreqs=s={vid_w}x{viz_h}:mode=bar:ascale=sqrt:fscale=log:colors=0x{color},format=rgba,colorkey=0x000000:0.1:0.5[viz]"
+        overlay = f"[bg][viz]overlay=0:{y_pos}:format=auto"
+    elif viz_style == "wave":
+        viz = f"[1:a]showwaves=s={vid_w}x{viz_h}:mode=line:colors=0x{color}:draw=full,format=rgba,colorkey=0x000000:0.1:0.1[viz]"
+        overlay = f"[bg][viz]overlay=0:{y_pos}:format=auto"
+    elif viz_style == "cqt":
+        viz = f"[1:a]showcqt=s={vid_w}x{viz_h}:text=0:axis=0:sono_h=0:bar_g=2:bar_v=15:bar_t=0.5,format=rgba,colorkey=0x000000:0.1:0.5[viz]"
+        overlay = f"[bg][viz]overlay=0:{y_pos}:format=auto"
+    elif viz_style == "fire":
+        viz = f"[1:a]showspectrum=s={vid_w}x{viz_h}:slide=scroll:mode=separate:color=magma:scale=sqrt,format=rgba,colorkey=0x000000:0.1:0.5[viz]"
+        overlay = f"[bg][viz]overlay=0:{y_pos}:format=auto"
+    elif viz_style == "smoke":
+        viz = f"[1:a]showspectrum=s={vid_w}x{viz_h}:slide=scroll:mode=separate:color=intensity:scale=log:saturation=0:win_func=hann,format=rgba,colorkey=0x000000:0.02:0.3[viz]"
+        overlay = f"[bg][viz]overlay=0:{y_pos}:format=auto"
+    elif viz_style == "reactor":
+        r_size = min(vid_w, viz_h)
+        x_pos = (vid_w - r_size) // 2
+        viz = f"[1:a]avectorscope=s={r_size}x{r_size}:zoom=1.5:rc=255:gc=255:bc=255:rf=0:gf=0:bf=0:draw=line,format=rgba,colorkey=0x000000:0.1:0.5[viz]"
+        overlay = f"[bg][viz]overlay={x_pos}:{vid_h - r_size - viz_margin}:format=auto"
+    elif viz_style == "line_center":
+        viz = f"[1:a]showwaves=s={vid_w}x{viz_h}:mode=cline:colors=0x{color}:draw=full,format=rgba,colorkey=0x000000:0.1:0.1[viz]"
+        overlay = f"[bg][viz]overlay=0:{y_pos}:format=auto"
+    else:
+        return None, None
+
+    return viz, overlay
+
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920,
@@ -550,6 +588,27 @@ with col2:
             st_size = st.slider("Размер заголовка", 30, 150, 60)
             st_pos = st.slider(f"Позиция Y (0-верх, {vid_h}-низ)", 0, vid_h, int(vid_h/4))
 
+    with st.expander("🎵 Аудио-визуализатор (только для фото)", expanded=False):
+        VIZ_STYLES = {
+            "Нет": "none",
+            "📊 Бары (Эквалайзер)": "bars",
+            "🌊 Волна (Осциллоскоп)": "wave",
+            "🎼 CQT (Хроматика)": "cqt",
+            "〰️ Струна": "line_center",
+            "🔥 Огонь (Спектрограмма)": "fire",
+            "💨 Дым (Спектр)": "smoke",
+            "🔵 Реактор (Фазовый скоп)": "reactor",
+        }
+        viz_style_label = st.selectbox("Стиль визуализатора", list(VIZ_STYLES.keys()), index=0)
+        viz_style = VIZ_STYLES[viz_style_label]
+        if viz_style != "none":
+            viz_h = st.slider("Высота эффекта (px)", 80, 600, 250, step=20)
+            viz_margin = st.slider("Отступ от низа (px)", 0, 400, 0, step=10)
+            viz_color = st.color_picker("Цвет (для Баров, Волны, Струны)", "#FFFFFF")
+        else:
+            viz_h, viz_margin, viz_color = 250, 0, "#FFFFFF"
+
+
     # Preview with text overlay
     preview_img_path = None
     if img_path:
@@ -675,20 +734,33 @@ else:
                         with Image.open(img_path) as im:
                             im_resized = resize_to_video(im, width=vid_w, height=vid_h).convert("RGB")
                             im_resized.save(final_img_path, quality=95)
-                        # Получаем точную длительность аудио через ffprobe
-                        # (вместо -shortest, который добавляет 2-3 сек буферных кадров)
+                        # Точная длительность аудио (избегаем хвостовой тишины)
                         probe = subprocess.run(
                             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                              "-of", "default=noprint_wrappers=1:nokey=1", aud_path],
                             capture_output=True, text=True
                         )
                         audio_dur = probe.stdout.strip() or "0"
-                        cmd = [
-                            "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
-                            "-i", final_img_path, "-i", aud_path,
-                            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                            "FINAL_SHORT.mp4"
-                        ]
+                        viz_part, overlay_part = build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color)
+                        if viz_part:
+                            # С визуализатором: filter_complex
+                            fc = f"[0:v]scale={vid_w}:{vid_h}[bg];{viz_part};{overlay_part}[vout]"
+                            cmd = [
+                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
+                                "-i", final_img_path, "-i", aud_path,
+                                "-filter_complex", fc,
+                                "-map", "[vout]", "-map", "1:a",
+                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                "FINAL_SHORT.mp4"
+                            ]
+                        else:
+                            # Без визуализатора
+                            cmd = [
+                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
+                                "-i", final_img_path, "-i", aud_path,
+                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                "FINAL_SHORT.mp4"
+                            ]
 
                     st.write("Склейка (FFmpeg)...")
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -824,20 +896,34 @@ else:
                         with Image.open(img_path) as im:
                             im_resized = resize_to_video(im, width=vid_w, height=vid_h).convert("RGB")
                             im_resized.save(final_img_path, quality=95)
-                        # Точная длительность аудио через ffprobe (избегаем 2-3 сек тишины от -shortest)
+                        # Точная длительность аудио (избегаем хвостовой тишины)
                         probe = subprocess.run(
                             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                              "-of", "default=noprint_wrappers=1:nokey=1", aud_path],
                             capture_output=True, text=True
                         )
                         audio_dur = probe.stdout.strip() or "0"
-                        cmd = [
-                            "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
-                            "-i", final_img_path, "-i", aud_path,
-                            "-vf", f"ass={ass_basename}",
-                            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                            "FINAL_SHORT.mp4"
-                        ]
+                        viz_part, overlay_part = build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color)
+                        if viz_part:
+                            # С визуализатором + субтитрами: filter_complex с ASS в конце цепочки
+                            fc = f"[0:v]scale={vid_w}:{vid_h}[bg];{viz_part};{overlay_part}[vtmp];[vtmp]ass={ass_basename}[vout]"
+                            cmd = [
+                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
+                                "-i", final_img_path, "-i", aud_path,
+                                "-filter_complex", fc,
+                                "-map", "[vout]", "-map", "1:a",
+                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                "FINAL_SHORT.mp4"
+                            ]
+                        else:
+                            # Без визуализатора, только субтитры
+                            cmd = [
+                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
+                                "-i", final_img_path, "-i", aud_path,
+                                "-vf", f"ass={ass_basename}",
+                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+                                "FINAL_SHORT.mp4"
+                            ]
 
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     stdout, stderr = process.communicate()
