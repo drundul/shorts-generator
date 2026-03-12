@@ -824,10 +824,18 @@ else:
                         with Image.open(img_path) as im:
                             im_resized = resize_to_video(im, width=vid_w, height=vid_h).convert("RGB")
                             im_resized.save(final_img_path, quality=95)
+                        # Точная длительность аудио через ffprobe (избегаем 2-3 сек тишины от -shortest)
+                        probe = subprocess.run(
+                            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                             "-of", "default=noprint_wrappers=1:nokey=1", aud_path],
+                            capture_output=True, text=True
+                        )
+                        audio_dur = probe.stdout.strip() or "0"
                         cmd = [
-                            "ffmpeg", "-y", "-loop", "1", "-i", final_img_path, "-i", aud_path,
+                            "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
+                            "-i", final_img_path, "-i", aud_path,
                             "-vf", f"ass={ass_basename}",
-                            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
+                            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
                             "FINAL_SHORT.mp4"
                         ]
 
