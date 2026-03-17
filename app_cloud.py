@@ -45,7 +45,17 @@ os.makedirs(ASSETS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # OpenAI key from Streamlit Secrets
-client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY", ""))
+api_key = st.secrets.get("OPENAI_API_KEY", "")
+if not api_key:
+    st.error("🔑 Ошибка: OPENAI_API_KEY не найден в secrets.toml!")
+    st.stop()
+
+# Инициализируем клиента с таймаутом, чтобы избежать бесконечного ожидания при плохом соединении
+client = OpenAI(
+    api_key=api_key,
+    timeout=60.0,  # 60 секунд на запрос
+    max_retries=3  # автоматический повтор при сетевых сбоях
+)
 
 # --- FUNC: SMART RESIZE ---
 def resize_to_video(image, width=1080, height=1920):
@@ -209,12 +219,86 @@ def build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color_hex):
 
     return viz, overlay
 
+# --- FUNC: GRADIENT OVERLAY (Cinematic Vignette) ---
+def create_gradient_overlay_png(path, width, height, dark_zone_ratio=0.5, max_opacity=0.65):
+    """
+    Создаёт PNG с плавным тёмным градиентом снизу (как в кино).
+    Полностью прозрачный вверху — тёмный внизу.
+    """
+    grad_img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw_g = ImageDraw.Draw(grad_img)
+    grad_start_y = int(height * (1 - dark_zone_ratio))
+    zone_height = height - grad_start_y
+    for y in range(grad_start_y, height):
+        # Кубическое затухание (**3) делает градиент очень мягким сверху и плотным только в самом низу
+        progress = (y - grad_start_y) / max(zone_height, 1)
+        progress = progress ** 3.0
+        alpha = int(255 * max_opacity * progress)
+        draw_g.line([(0, y), (width, y)], fill=(0, 0, 0, alpha))
+    grad_img.save(path, "PNG")
+    return path
+
+
+def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
+                           viz_style, viz_h, viz_margin, viz_color,
+                           gradient_png_path=None, ass_basename=None):
+    """
+    Строит FFmpeg-команду для рендера на фото-фоне.
+    Обрабатывает все комбинации: градиент + визуализатор + субтитры.
+    """
+    use_viz = viz_style != "none"
+    use_gradient = gradient_png_path is not None
+    use_ass = ass_basename is not None
+
+    base_in = ["ffmpeg", "-y", "-loop", "1", "-t", audio_dur, "-i", final_img_path, "-i", aud_path]
+    # Явные настройки качества: CRF 23, tune stillimage (для фото), битрейт звука 128k
+    encode = ["-c:v", "libx264", "-crf", "26", "-preset", "faster", "-tune", "stillimage",
+              "-level", "4.1", "-r", "24", "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "FINAL_SHORT.mp4"]
+
+    # Простой случай: без градиента и визуализатора
+    if not use_gradient and not use_viz:
+        if use_ass:
+            return base_in + ["-vf", f"ass={ass_basename}"] + encode
+        else:
+            return base_in + encode
+
+    # Сложный случай → filter_complex
+    # цепочка: scale → gradient → visualizer → ASS
+    fc = [f"[0:v]scale={vid_w}:{vid_h}[bg_s]"]
+    cur = "bg_s"
+    extra_inputs = []
+
+    if use_gradient:
+        # ВАЖНО: -t audio_dur ограничивает длину PNG-инпута, иначе FFmpeg висит бесконечно
+        extra_inputs = ["-loop", "1", "-t", audio_dur, "-i", gradient_png_path]
+        # format=auto нужен для корректного наложения RGBA (альфа-канал градиента)
+        fc.append(f"[{cur}][2:v]overlay=0:0:format=auto[bg_g]")
+        cur = "bg_g"
+
+    if use_viz:
+        viz_flt, overlay_flt = build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color)
+        if viz_flt:
+            adj_ov = overlay_flt.replace("[bg]", f"[{cur}]")
+            fc.append(viz_flt)
+            fc.append(f"{adj_ov}[bg_v]")
+            cur = "bg_v"
+
+    if use_ass:
+        fc.append(f"[{cur}]ass={ass_basename}[vout]")
+        cur = "vout"
+
+    return base_in + extra_inputs + [
+        "-filter_complex", ";".join(fc),
+        "-map", f"[{cur}]", "-map", "1:a"
+    ] + encode
+
+
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920,
                          sub_style="karaoke"):
-    # For karaoke, one_word and box modes, split phrases into individual words
-    if sub_style in ("karaoke", "one_word", "box"):
+    # For karaoke, one_word, box, and teleprompter modes, split phrases into individual words
+    if sub_style in ("karaoke", "one_word", "box", "teleprompter"):
         words = split_phrases_to_words(words)
 
     center_y = int(height/2 + offset_y)
@@ -359,6 +443,77 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line}"
             events.append(full_line)
 
+    # === MODE: TELEPROMPTER (SMOOTH SCROLL) ===
+    elif sub_style == "teleprompter":
+        chunks = []
+        current_chunk = []
+        for w in words:
+            txt = str(w.get('word', ''))
+            is_capital = txt[0].isupper() if txt else False
+            if len(current_chunk) >= max_words_per_screen or (is_capital and len(current_chunk) > 0):
+                chunks.append(current_chunk)
+                current_chunk = []
+            current_chunk.append(w)
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        g = int(font_size * 1.8)  # Увеличенный интервал между строками (был 1.4)
+        d = 250  # Время анимации сдвига (ms)
+
+        for i, chunk in enumerate(chunks):
+            if not chunk: continue
+            line_start = chunk[0]['start']
+            # Строка висит на экране, пока не начнется следующая (или +0.5с в конце видео)
+            if i + 1 < len(chunks) and chunks[i+1]:
+                line_end = chunks[i+1][0]['start']
+            else:
+                line_end = chunk[-1]['end'] + 0.5
+
+            ass_start = time_to_ass_format(line_start)
+            ass_end = time_to_ass_format(line_end)
+
+            # --- АКТИВНАЯ СТРОКА (i) — в центре ---
+            text_line = ""
+            for w_obj in chunk:
+                w_text = w_obj['word']
+                if uppercase: w_text = w_text.upper()
+                rel_start = int((w_obj['start'] - line_start) * 1000)
+                rel_end = int((w_obj['end'] - line_start) * 1000)
+                effect = f"{{\\1c{base_color}\\t({rel_start},{rel_start+1},\\1c{highlight_color})}}{{\\t({rel_end},{rel_end+1},\\1c{base_color})}}{w_text} "
+                text_line += effect
+            
+            x, y = center_x, center_y
+            
+            # Для самого первого кадра просто появляемся, для остальных — эффект всплытия снизу
+            if i == 0:
+                act_prefix = f"{{\\pos({x},{y})\\alpha&HFF&\\t(0,{d},\\alpha&H00&)}}"
+            else:
+                act_prefix = f"{{\\move({x},{y+g},{x},{y},0,{d})\\alpha&H80&\\t(0,{d},\\alpha&H00&)}}"
+            
+            events.append(f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{act_prefix}{text_line.strip()}")
+
+            # --- ПРЕДЫДУЩАЯ СТРОКА (i-1) — уходит вверх ---
+            if i - 1 >= 0:
+                prev_text = " ".join([w['word'].upper() if uppercase else w['word'] for w in chunks[i-1]])
+                prv_prefix = f"{{\\move({x},{y},{x},{y-g},0,{d})\\alpha&H00&\\t(0,{d},\\alpha&H80&)}}"
+                events.append(f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{prv_prefix}{prev_text}")
+
+            # --- СЛЕДУЮЩАЯ СТРОКА (i+1) — готовится снизу ---
+            if i + 1 < len(chunks):
+                next_text = " ".join([w['word'].upper() if uppercase else w['word'] for w in chunks[i+1]])
+                if i == 0:
+                    nxt_prefix = f"{{\\pos({x},{y+g})\\alpha&HFF&\\t(0,{d},\\alpha&H80&)}}"
+                else:
+                    nxt_prefix = f"{{\\move({x},{y+2*g},{x},{y+g},0,{d})\\alpha&HFF&\\t(0,{d},\\alpha&H80&)}}"
+                events.append(f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{nxt_prefix}{next_text}")
+
+            # --- ИСЧЕЗАЮЩАЯ СТРОКА (i-2) — растворяется в самом верху ---
+            if i - 2 >= 0:
+                old_text = " ".join([w['word'].upper() if uppercase else w['word'] for w in chunks[i-2]])
+                old_prefix = f"{{\\move({x},{y-g},{x},{y-2*g},0,{d})\\alpha&H80&\\t(0,{d},\\alpha&HFF&)}}"
+                events.append(f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{old_prefix}{old_text}")
+
+
     with open(output_ass_path, "w", encoding="utf-8-sig") as f:
         f.write(header + "\n".join(events))
 
@@ -417,9 +572,22 @@ def parse_srt_content(srt_text):
 def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sample="ВАШ ТЕКСТ ТУТ\nСМОТРИТСЯ ТАК",
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", uppercase_text=False, width=1080, height=1920,
-                         no_subs=False, viz_style="none", viz_h=250, viz_margin=0, viz_color_hex="#FFFFFF"):
+                         no_subs=False, viz_style="none", viz_h=250, viz_margin=0, viz_color_hex="#FFFFFF",
+                         use_gradient=False, gradient_zone=50, gradient_opacity=65, sub_style="karaoke"):
     bg = Image.open(bg_image_path).convert("RGBA")
     bg = resize_to_video(bg, width, height)
+
+    # Градиентная виньетка (улучшенная кривая)
+    if use_gradient:
+        g_start = int(height * (1 - gradient_zone / 100))
+        grad_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(grad_layer)
+        g_zone_h = height - g_start
+        for gy in range(g_start, height):
+            gprog = ((gy - g_start) / max(g_zone_h, 1)) ** 2.2
+            galpha = int(255 * (gradient_opacity / 100) * gprog)
+            gd.line([(0, gy), (width, gy)], fill=(0, 0, 0, galpha))
+        bg = Image.alpha_composite(bg, grad_layer)
 
     if uppercase_text:
         text_sample = text_sample.upper()
@@ -427,30 +595,32 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
     txt_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
 
-    def draw_centered(text, center_y_pos, f_name, f_sz, color=(255, 255, 255, 255)):
-        font = ImageFont.load_default()
-        # Try common Linux font paths (for cloud), then Windows
+    def draw_centered_on_layer(draw_obj, text, target_y, f_name, f_sz, color=(255, 255, 255, 255)):
+        font = None
         font_paths = [
-            f"/usr/share/fonts/truetype/dejavu/{f_name}",
-            f"/usr/share/fonts/truetype/{f_name}",
+            f_name, 
             f"C:\\Windows\\Fonts\\{f_name}",
             f"C:\\Windows\\Fonts\\{f_name}.ttf",
-            f_name
+            f_name.replace("Regular", "Bold"),
+            "arial.ttf"
         ]
         for fp in font_paths:
-            try:
-                font = ImageFont.truetype(fp, f_sz)
-                break
-            except:
-                continue
+            try: font = ImageFont.truetype(fp, f_sz); break
+            except: continue
+        if not font: font = ImageFont.load_default()
 
-        bbox = d.multiline_textbbox((0, 0), text, font=font, align="center")
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        x = (width - w) / 2
-        y = center_y_pos - (h / 2)
+        # Используем фиксированную высоту строки из метрик шрифта для идеальных интервалов
+        ascent, descent = font.getmetrics()
+        fixed_h = ascent + descent
+        
+        bbox = draw_obj.multiline_textbbox((0, 0), text, font=font, align="center")
+        w = bbox[2] - bbox[0]
+        cur_x = (width - w) / 2
+        # Центрируем по базовой линии, а не по боксу букв
+        cur_y = target_y - (ascent / 2)
 
-        d.multiline_text((x + 4, y + 4), text, font=font, fill=(0, 0, 0, 180), align="center")
-        d.multiline_text((x, y), text, font=font, fill=color, align="center")
+        draw_obj.multiline_text((cur_x+3, cur_y+3), text, font=font, fill=(0,0,0,160), align="center")
+        draw_obj.multiline_text((cur_x, cur_y), text, font=font, fill=color, align="center")
 
     if base_color_hex.startswith('#'):
         h_b = base_color_hex.lstrip('#')
@@ -460,7 +630,15 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
 
     dyn_y = (height / 2) + offset_y
     if not no_subs:
-        draw_centered(text_sample, dyn_y, font_name, font_size, color=rgb_base)
+        if sub_style == "teleprompter":
+            gap = int(font_size * 1.8)
+            p_color = (rgb_base[0], rgb_base[1], rgb_base[2], 80) # Полупрозрачный для соседей
+            draw_centered_on_layer(d, "ПРЕДЫДУЩАЯ СТРОКА ТЕКСТА", dyn_y - gap, font_name, font_size, color=p_color)
+            draw_centered_on_layer(d, "ТЕКУЩАЯ АКТИВНАЯ СТРОКА", dyn_y, font_name, font_size, color=rgb_base)
+            draw_centered_on_layer(d, "СЛЕДУЮЩАЯ СТРОКА ТЕКСТА", dyn_y + gap, font_name, font_size, color=p_color)
+        else:
+            draw_centered_on_layer(d, text_sample, dyn_y, font_name, font_size, color=rgb_base)
+
 
     if static_text:
         if static_color.startswith('#'):
@@ -468,7 +646,7 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
         else:
             rgb = (255, 255, 255, 255)
-        draw_centered(static_text, static_pos_y, static_font, static_size, color=rgb)
+        draw_centered_on_layer(d, static_text, static_pos_y, static_font, static_size, color=rgb)
 
     if viz_style != "none":
         viz_y = height - viz_h - viz_margin
@@ -522,7 +700,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📱 Shorts Generator")
+st.title("📱 Shorts Generator V3")
 
 col1, col2 = st.columns([1, 1])
 
@@ -571,10 +749,10 @@ with col2:
     st.subheader("2. Вид")
 
     FONTS = [
-        "DejaVuSans", "DejaVuSans-Bold", "DejaVuSerif", "DejaVuSerif-Bold",
-        "LiberationSans-Regular", "LiberationSans-Bold",
-        "LiberationSerif-Regular", "LiberationSerif-Bold",
-        "LiberationMono-Regular", "LiberationMono-Bold",
+        "Montserrat-Bold", "Montserrat-Regular",
+        "Roboto-Bold", "Roboto-Regular",
+        "OpenSans-Bold", "BebasNeue-Regular",
+        "Arial", "Verdana", "Tahoma"
     ]
 
     font = st.selectbox("Шрифт", FONTS, index=0)
@@ -586,17 +764,40 @@ with col2:
         highlight_hex = st.color_picker("🎯 Цвет подсветки", "#FFFF00")
     uppercase_cb = st.checkbox("АБВ Весь текст заглавными (CAPS LOCK)", value=False)
 
-    STYLES_MAP = {"🎤 Караоке (подсветка слов)": "karaoke", "💬 По 1 слову (TikTok)": "one_word", "🟩 Бокс-подсветка": "box", "📺 Классические субтитры": "classic"}
+    STYLES_MAP = {
+        "🎤 Караоке (подсветка слов)": "karaoke", 
+        "💬 По 1 слову (TikTok)": "one_word", 
+        "🟩 Бокс-подсветка": "box", 
+        "📺 Классические субтитры": "classic",
+        "📜 Телесуфлер (Скролл строк)": "teleprompter"
+    }
 
     no_subs = st.checkbox("🚫 Без субтитров (только аудио на фоне)", value=False,
                           help="Режим для подкастов: фото/видео + аудио без распознавания речи")
     if not no_subs:
         sub_style_label = st.selectbox("Стиль субтитров", list(STYLES_MAP.keys()), index=0)
         sub_style = STYLES_MAP[sub_style_label]
+        words_per_line = st.slider("Слов в каждой строке", 2, 8, 5, help="4-5 — стандарт, 6-8 — для плотного текста подкаста")
     else:
-        sub_style = "karaoke"  # не используется в режиме без субтитров
+        sub_style, words_per_line = "karaoke", 5
 
     offset = st.slider("↕️ Положение", -800, 800, 0, step=20)
+
+    with st.expander("🌑 Контраст (виньетка под текстом)", expanded=False):
+        use_gradient = st.checkbox(
+            "Тёмная подложка (виньетка)", value=False,
+            help="Полупрозрачное киноматическое затемнение снизу — текст читается на любом фоне"
+        )
+        if use_gradient:
+            g_col1, g_col2 = st.columns(2)
+            with g_col1:
+                gradient_opacity = st.slider("Интенсивность (%)", 20, 90, 65, step=5,
+                                            help="65-75% для светлых фонов, 40-50% для тёмных")
+            with g_col2:
+                gradient_zone = st.slider("Зона (%)", 20, 80, 50, step=5,
+                                         help="50 = нижняя половина экрана")
+        else:
+            gradient_opacity, gradient_zone = 65, 50
 
     with st.expander("📌 Настройки заголовка (Статичный текст)", expanded=False):
         static_text = st.text_area("Текст заголовка (постоянно висит)", placeholder="Например: Стихи Есенина")
@@ -648,7 +849,9 @@ with col2:
         prev = create_preview_image(preview_img_path, font + ".ttf", size, offset, "ваш текст\nтут смотрится так",
                                     static_text, st_font + ".ttf", st_size, st_color, st_pos,
                                     base_color_hex=base_hex, uppercase_text=uppercase_cb, width=vid_w, height=vid_h,
-                                    no_subs=no_subs, viz_style=viz_style, viz_h=viz_h, viz_margin=viz_margin, viz_color_hex=viz_color)
+                                    no_subs=no_subs, viz_style=viz_style, viz_h=viz_h, viz_margin=viz_margin, viz_color_hex=viz_color,
+                                    use_gradient=use_gradient, gradient_zone=gradient_zone, gradient_opacity=gradient_opacity,
+                                    sub_style=sub_style)
         # Scale preview to fit Streamlit column nicely
         prev_ratio = vid_w / vid_h
         prev.thumbnail((350, int(350 / prev_ratio)))
@@ -704,7 +907,8 @@ else:
                                     "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
                                     "-filter_complex", vf_complex,
                                     "-map", "[vout]", "-map", "1:a",
-                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
+                                    "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
+                                    "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
                                     "FINAL_SHORT.mp4"
                                 ]
                             else:
@@ -762,26 +966,19 @@ else:
                             capture_output=True, text=True
                         )
                         audio_dur = probe.stdout.strip() or "0"
-                        viz_part, overlay_part = build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color)
-                        if viz_part:
-                            # С визуализатором: filter_complex
-                            fc = f"[0:v]scale={vid_w}:{vid_h}[bg];{viz_part};{overlay_part}[vout]"
-                            cmd = [
-                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
-                                "-i", final_img_path, "-i", aud_path,
-                                "-filter_complex", fc,
-                                "-map", "[vout]", "-map", "1:a",
-                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                "FINAL_SHORT.mp4"
-                            ]
-                        else:
-                            # Без визуализатора
-                            cmd = [
-                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
-                                "-i", final_img_path, "-i", aud_path,
-                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                "FINAL_SHORT.mp4"
-                            ]
+                        # Градиент (если включён)
+                        grad_png = None
+                        if use_gradient:
+                            grad_path = os.path.join(OUTPUT_DIR, "gradient_overlay.png")
+                            create_gradient_overlay_png(grad_path, vid_w, vid_h,
+                                                        dark_zone_ratio=gradient_zone / 100,
+                                                        max_opacity=gradient_opacity / 100)
+                            grad_png = grad_path
+                        cmd = build_image_render_cmd(
+                            final_img_path, aud_path, audio_dur, vid_w, vid_h,
+                            viz_style, viz_h, viz_margin, viz_color,
+                            gradient_png_path=grad_png, ass_basename=None
+                        )
 
                     st.write("Склейка (FFmpeg)...")
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -875,7 +1072,7 @@ else:
 
                     st.write("Генерация субтитров...")
                     ass_path = os.path.join(OUTPUT_DIR, "subs.ass")
-                    generate_karaoke_ass(words_sorted, ass_path, font, size, 4, offset,
+                    generate_karaoke_ass(words_sorted, ass_path, font, size, words_per_line, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
                                         base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
                                         width=vid_w, height=vid_h, sub_style=sub_style)
@@ -898,7 +1095,8 @@ else:
                                 "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
                                 "-filter_complex", base_vf,
                                 "-map", "[vout]", "-map", "1:a",
-                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
+                                "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
+                                "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
                                 "FINAL_SHORT.mp4"
                             ]
                         else:
@@ -924,27 +1122,19 @@ else:
                             capture_output=True, text=True
                         )
                         audio_dur = probe.stdout.strip() or "0"
-                        viz_part, overlay_part = build_viz_filter(viz_style, vid_w, vid_h, viz_h, viz_margin, viz_color)
-                        if viz_part:
-                            # С визуализатором + субтитрами: filter_complex с ASS в конце цепочки
-                            fc = f"[0:v]scale={vid_w}:{vid_h}[bg];{viz_part};{overlay_part}[vtmp];[vtmp]ass={ass_basename}[vout]"
-                            cmd = [
-                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
-                                "-i", final_img_path, "-i", aud_path,
-                                "-filter_complex", fc,
-                                "-map", "[vout]", "-map", "1:a",
-                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                "FINAL_SHORT.mp4"
-                            ]
-                        else:
-                            # Без визуализатора, только субтитры
-                            cmd = [
-                                "ffmpeg", "-y", "-loop", "1", "-t", audio_dur,
-                                "-i", final_img_path, "-i", aud_path,
-                                "-vf", f"ass={ass_basename}",
-                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                "FINAL_SHORT.mp4"
-                            ]
+                        # Градиент (если включён)
+                        grad_png = None
+                        if use_gradient:
+                            grad_path = os.path.join(OUTPUT_DIR, "gradient_overlay.png")
+                            create_gradient_overlay_png(grad_path, vid_w, vid_h,
+                                                        dark_zone_ratio=gradient_zone / 100,
+                                                        max_opacity=gradient_opacity / 100)
+                            grad_png = grad_path
+                        cmd = build_image_render_cmd(
+                            final_img_path, aud_path, audio_dur, vid_w, vid_h,
+                            viz_style, viz_h, viz_margin, viz_color,
+                            gradient_png_path=grad_png, ass_basename=ass_basename
+                        )
 
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     stdout, stderr = process.communicate()
