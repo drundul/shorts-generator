@@ -377,12 +377,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     if static_text:
         font = None
+        st_base = static_font.replace('.ttf', '').replace('.TTF', '')
         font_paths = [
-            f"fonts/{static_font}.ttf",
-            static_font + ".ttf",
-            f"C:\\Windows\\Fonts\\{static_font}",
-            f"C:\\Windows\\Fonts\\{static_font}.ttf",
-            static_font.replace("Regular", "Bold"),
+            f"fonts/{st_base}.ttf",
+            f"{st_base}.ttf",
+            f"C:\\Windows\\Fonts\\{st_base}.ttf",
+            f"C:\\Windows\\Fonts\\{st_base}",
+            st_base.replace("Regular", "Bold") + ".ttf",
+            "fonts/arial.ttf",
             "arial.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -667,12 +669,15 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
 
     def draw_centered_on_layer(draw_obj, text, target_y, f_name, f_sz, color=(255, 255, 255, 255)):
         font = None
+        # Убираем .ttf если уже есть, чтобы не дублировать
+        base_name = f_name.replace('.ttf', '').replace('.TTF', '')
         font_paths = [
-            f"fonts/{f_name}.ttf",
-            f_name, 
-            f"C:\\Windows\\Fonts\\{f_name}",
-            f"C:\\Windows\\Fonts\\{f_name}.ttf",
-            f_name.replace("Regular", "Bold"),
+            f"fonts/{base_name}.ttf",
+            f"{base_name}.ttf",
+            f"C:\\Windows\\Fonts\\{base_name}.ttf",
+            f"C:\\Windows\\Fonts\\{base_name}",
+            base_name.replace("Regular", "Bold") + ".ttf",
+            "fonts/arial.ttf",
             "arial.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -722,12 +727,14 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             rgb = (255, 255, 255, 255)
             
         font = None
+        st_base = static_font.replace('.ttf', '').replace('.TTF', '')
         font_paths = [
-            f"fonts/{static_font}.ttf",
-            static_font + ".ttf",
-            f"C:\\Windows\\Fonts\\{static_font}",
-            f"C:\\Windows\\Fonts\\{static_font}.ttf",
-            static_font.replace("Regular", "Bold"),
+            f"fonts/{st_base}.ttf",
+            f"{st_base}.ttf",
+            f"C:\\Windows\\Fonts\\{st_base}.ttf",
+            f"C:\\Windows\\Fonts\\{st_base}",
+            st_base.replace("Regular", "Bold") + ".ttf",
+            "fonts/arial.ttf",
             "arial.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
