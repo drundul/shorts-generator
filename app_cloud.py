@@ -359,7 +359,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             f"C:\\Windows\\Fonts\\{static_font}",
             f"C:\\Windows\\Fonts\\{static_font}.ttf",
             static_font.replace("Regular", "Bold"),
-            "arial.ttf"
+            "arial.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
         ]
         for fp in font_paths:
             try: font = ImageFont.truetype(fp, static_size); break
@@ -645,7 +648,10 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             f"C:\\Windows\\Fonts\\{f_name}",
             f"C:\\Windows\\Fonts\\{f_name}.ttf",
             f_name.replace("Regular", "Bold"),
-            "arial.ttf"
+            "arial.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
         ]
         for fp in font_paths:
             try: font = ImageFont.truetype(fp, f_sz); break
@@ -696,7 +702,10 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             f"C:\\Windows\\Fonts\\{static_font}",
             f"C:\\Windows\\Fonts\\{static_font}.ttf",
             static_font.replace("Regular", "Bold"),
-            "arial.ttf"
+            "arial.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
         ]
         for fp in font_paths:
             try: font = ImageFont.truetype(fp, static_size); break
