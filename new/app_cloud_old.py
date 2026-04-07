@@ -292,29 +292,19 @@ def create_gradient_overlay_png(path, width, height, dark_zone_ratio=0.5, max_op
 
 def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
                            viz_style, viz_h, viz_margin, viz_color,
-                           gradient_png_path=None, ass_basename=None, max_duration=None):
+                           gradient_png_path=None, ass_basename=None):
     """
     Строит FFmpeg-команду для рендера на фото-фоне.
     Обрабатывает все комбинации: градиент + визуализатор + субтитры.
-    max_duration: если задан (секунды), обрезает видео до этой длины (но не длиннее аудио).
     """
     use_viz = viz_style != "none"
     use_gradient = gradient_png_path is not None
     use_ass = ass_basename is not None
 
-    # Эффективная длина: не длиннее аудио и не длиннее лимита пользователя
-    if max_duration is not None:
-        effective_dur = str(min(float(audio_dur), float(max_duration)))
-    else:
-        effective_dur = audio_dur
-
     base_in = ["ffmpeg", "-y", "-loop", "1", "-t", audio_dur, "-i", final_img_path, "-i", aud_path]
     # Явные настройки качества: CRF 23, tune stillimage (для фото), битрейт звука 128k
-    # -map_metadata -1 — очищаем все метаданные из итогового файла
-    # -t effective_dur — ограничиваем длину (если задан max_duration)
     encode = ["-c:v", "libx264", "-crf", "26", "-preset", "faster", "-tune", "stillimage",
-              "-level", "4.1", "-r", "24", "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p",
-              "-map_metadata", "-1", "-t", effective_dur, "FINAL_SHORT.mp4"]
+              "-level", "4.1", "-r", "24", "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "FINAL_SHORT.mp4"]
 
     # Простой случай: без градиента и визуализатора
     if not use_gradient and not use_viz:
@@ -857,14 +847,6 @@ with col1:
 
     subs_file = st.file_uploader("📝 Предзагруженные субтитры (SRT или CSV)", type=['csv', 'srt'])
 
-    with st.expander("⏱️ Ограничить длительность ролика", expanded=False):
-        use_duration_limit = st.checkbox("Обрезать видео по времени", value=False,
-                                         help="Финальное видео будет не длиннее указанного значения. Если аудио короче — видео всё равно остановится по аудио.")
-        if use_duration_limit:
-            target_duration = st.slider("Длительность (сек)", 5.0, 60.0, 10.0, step=1.0)
-        else:
-            target_duration = None
-
 with col2:
     st.subheader("2. Вид")
 
@@ -1065,8 +1047,6 @@ else:
                         ] + audio_map + [
                             "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
                             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
-                            "-map_metadata", "-1",
-                        ] + (["-t", str(target_duration)] if target_duration else []) + [
                             "FINAL_SHORT.mp4"
                         ]
                     else:
@@ -1093,8 +1073,7 @@ else:
                         cmd = build_image_render_cmd(
                             final_img_path, aud_path, audio_dur, vid_w, vid_h,
                             viz_style, viz_h, viz_margin, viz_color,
-                            gradient_png_path=grad_png, ass_basename=ass_basename,
-                            max_duration=target_duration
+                            gradient_png_path=grad_png, ass_basename=ass_basename
                         )
 
                     st.write("Склейка (FFmpeg)...")
@@ -1227,8 +1206,6 @@ else:
                         ] + audio_map + [
                             "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
                             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
-                            "-map_metadata", "-1",
-                        ] + (["-t", str(target_duration)] if target_duration else []) + [
                             "FINAL_SHORT.mp4"
                         ]
                     else:
@@ -1255,8 +1232,7 @@ else:
                         cmd = build_image_render_cmd(
                             final_img_path, aud_path, audio_dur, vid_w, vid_h,
                             viz_style, viz_h, viz_margin, viz_color,
-                            gradient_png_path=grad_png, ass_basename=ass_basename,
-                            max_duration=target_duration
+                            gradient_png_path=grad_png, ass_basename=ass_basename
                         )
 
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
