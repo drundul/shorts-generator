@@ -727,18 +727,9 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             except: continue
         if not font: font = ImageFont.load_default()
 
-        # Используем фиксированную высоту строки из метрик шрифта для идеальных интервалов
-        ascent, descent = font.getmetrics()
-        fixed_h = ascent + descent
-        
-        bbox = draw_obj.multiline_textbbox((0, 0), text, font=font, align="center")
-        w = bbox[2] - bbox[0]
-        cur_x = (width - w) / 2
-        # Центрируем по базовой линии, а не по боксу букв
-        cur_y = target_y - (ascent / 2)
-
-        draw_obj.multiline_text((cur_x+3, cur_y+3), text, font=font, fill=(0,0,0,160), align="center")
-        draw_obj.multiline_text((cur_x, cur_y), text, font=font, fill=color, align="center")
+        # Используем встроенное центрирование Pillow, чтобы оно на 100% совпадало с Alignment 5 в ASS (libass)
+        draw_obj.multiline_text((width / 2 + 3, target_y + 3), text, font=font, fill=(0,0,0,160), align="center", anchor="mm")
+        draw_obj.multiline_text((width / 2, target_y), text, font=font, fill=color, align="center", anchor="mm")
 
     if base_color_hex.startswith('#'):
         h_b = base_color_hex.lstrip('#')
