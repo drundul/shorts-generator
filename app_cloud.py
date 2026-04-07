@@ -58,7 +58,9 @@ client = OpenAI(
 )
 
 # --- FUNC: SMART RESIZE ---
-def resize_to_video(image, width=1080, height=1920):
+def resize_to_video(image, width=1080, height=1920, scale_mode="Обрезать (Без краев)"):
+    if scale_mode == "Вписать (Черные края)":
+        return ImageOps.pad(image, (width, height), method=Image.Resampling.LANCZOS, color=(0, 0, 0))
     return ImageOps.fit(image, (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
 # --- FUNC: CREATE OVERLAY ---
@@ -147,6 +149,32 @@ def fix_whisper_timings(words):
     return res
 
 # --- FUNC: HELPER ---
+def wrap_text_to_width(text, font, max_width):
+    if not text:
+        return []
+    dummy_img = Image.new("RGBA", (1, 1))
+    draw_obj = ImageDraw.Draw(dummy_img)
+    lines = []
+    for paragraph in str(text).split('\n'):
+        words = paragraph.split(' ')
+        current_line = []
+        for word in list(filter(None, words)): # ignore empty spaces
+            test_line = ' '.join(current_line + [word]) if current_line else word
+            bbox = draw_obj.textbbox((0, 0), test_line, font=font)
+            length = bbox[2] - bbox[0]
+            if length <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                else:
+                    lines.append(word)
+                    current_line = []
+        if current_line:
+            lines.append(' '.join(current_line))
+    return lines
+
 def hex_to_ass_color(hex_str):
     hex_str = hex_str.lstrip('#')
     if len(hex_str) == 6:
@@ -325,7 +353,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     events = []
 
     if static_text:
-        formatted_static = static_text.replace("\n", "\\N")
+        font = None
+        font_paths = [
+            static_font + ".ttf",
+            f"C:\\Windows\\Fonts\\{static_font}",
+            f"C:\\Windows\\Fonts\\{static_font}.ttf",
+            static_font.replace("Regular", "Bold"),
+            "arial.ttf"
+        ]
+        for fp in font_paths:
+            try: font = ImageFont.truetype(fp, static_size); break
+            except: continue
+        if not font: font = ImageFont.load_default()
+        
+        wrapped_lines = wrap_text_to_width(static_text, font, width - 100)
+        formatted_static = "\\N".join(wrapped_lines)
         static_event = f"Dialogue: 0,0:00:00.00,1:00:00.00,StaticStyle,,0,0,0,,{{\\pos({center_x},{static_pos_y})}}{formatted_static}"
         events.append(static_event)
 
@@ -573,9 +615,10 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", uppercase_text=False, width=1080, height=1920,
                          no_subs=False, viz_style="none", viz_h=250, viz_margin=0, viz_color_hex="#FFFFFF",
-                         use_gradient=False, gradient_zone=50, gradient_opacity=65, sub_style="karaoke"):
+                         use_gradient=False, gradient_zone=50, gradient_opacity=65, sub_style="karaoke",
+                         video_scale="Обрезать (Без краев)"):
     bg = Image.open(bg_image_path).convert("RGBA")
-    bg = resize_to_video(bg, width, height)
+    bg = resize_to_video(bg, width, height, scale_mode=video_scale)
 
     # Градиентная виньетка (улучшенная кривая)
     if use_gradient:
@@ -646,7 +689,24 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             rgb = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
         else:
             rgb = (255, 255, 255, 255)
-        draw_centered_on_layer(d, static_text, static_pos_y, static_font, static_size, color=rgb)
+            
+        font = None
+        font_paths = [
+            static_font + ".ttf",
+            f"C:\\Windows\\Fonts\\{static_font}",
+            f"C:\\Windows\\Fonts\\{static_font}.ttf",
+            static_font.replace("Regular", "Bold"),
+            "arial.ttf"
+        ]
+        for fp in font_paths:
+            try: font = ImageFont.truetype(fp, static_size); break
+            except: continue
+        if not font: font = ImageFont.load_default()
+        
+        wrapped_lines = wrap_text_to_width(static_text, font, width - 100)
+        wrapped_text = "\n".join(wrapped_lines)
+
+        draw_centered_on_layer(d, wrapped_text, static_pos_y, static_font, static_size, color=rgb)
 
     if viz_style != "none":
         viz_y = height - viz_h - viz_margin
@@ -851,7 +911,7 @@ with col2:
                                     base_color_hex=base_hex, uppercase_text=uppercase_cb, width=vid_w, height=vid_h,
                                     no_subs=no_subs, viz_style=viz_style, viz_h=viz_h, viz_margin=viz_margin, viz_color_hex=viz_color,
                                     use_gradient=use_gradient, gradient_zone=gradient_zone, gradient_opacity=gradient_opacity,
-                                    sub_style=sub_style)
+                                    sub_style=sub_style, video_scale=video_scale)
         # Scale preview to fit Streamlit column nicely
         prev_ratio = vid_w / vid_h
         prev.thumbnail((350, int(350 / prev_ratio)))
@@ -894,70 +954,63 @@ else:
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
                     st.write("Подготовка файлов...")
 
+                    ass_basename = None
+                    if static_text:
+                        st.write("Генерация заголовка...")
+                        ass_path = os.path.join(OUTPUT_DIR, "subs_static.ass")
+                        generate_karaoke_ass([], ass_path, font, size, words_per_line, offset,
+                                            static_text, st_font, st_size, st_color, st_pos,
+                                            base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
+                                            width=vid_w, height=vid_h, sub_style=sub_style)
+                        ass_basename = os.path.basename(ass_path)
+
                     if video_path:
                         if video_scale == "Размытый фон":
-                            vf_complex = (
-                                f"[0:v:0]split[a][b];"
-                                f"[a]scale={vid_w}:{vid_h},boxblur=20:20[bg];"
-                                f"[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[fg];"
-                                f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
-                            )
-                            if mute_video:
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                    "-filter_complex", vf_complex,
-                                    "-map", "[vout]", "-map", "1:a",
-                                    "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
-                                    "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
-                                    "FINAL_SHORT.mp4"
-                                ]
+                            base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2"
+                            if ass_basename:
+                                base_vf += f",ass={ass_basename}[vout]"
                             else:
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                    "-filter_complex", vf_complex + ";[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
-                                    "-map", "[vout]", "-map", "[aout]",
-                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                    "FINAL_SHORT.mp4"
-                                ]
+                                base_vf += "[vout]"
                         elif video_scale == "Обрезать (Без краев)":
-                            vf = f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h}"
-                            if mute_video:
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                    "-vf", vf, "-map", "0:v:0", "-map", "1:a",
-                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
-                                    "FINAL_SHORT.mp4"
-                                ]
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h}"
+                            if ass_basename:
+                                base_vf += f",ass={ass_basename}[vout]"
                             else:
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                    "-filter_complex", f"[0:v:0]{vf}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
-                                    "-map", "[vout]", "-map", "[aout]",
-                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                    "FINAL_SHORT.mp4"
-                                ]
+                                base_vf += "[vout]"
                         else:  # Вписать (Черные края)
-                            vf = f"scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2"
-                            if mute_video:
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                    "-vf", vf, "-map", "0:v:0", "-map", "1:a",
-                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p", "-shortest",
-                                    "FINAL_SHORT.mp4"
-                                ]
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2"
+                            if ass_basename:
+                                base_vf += f",ass={ass_basename}[vout]"
                             else:
-                                cmd = [
-                                    "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                    "-filter_complex", f"[0:v:0]{vf}[vout];[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
-                                    "-map", "[vout]", "-map", "[aout]",
-                                    "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                    "FINAL_SHORT.mp4"
-                                ]
+                                base_vf += "[vout]"
+
+                        audio_map = []
+                        if mute_video:
+                            if audio_file is not None:
+                                audio_map = ["-map", "1:a"]
+                            else:
+                                audio_map = ["-an"]
+                        else:
+                            if audio_file is not None:
+                                base_vf += ";[0:a][1:a]amix=inputs=2:duration=shortest[aout]"
+                                audio_map = ["-map", "[aout]"]
+                            else:
+                                audio_map = ["-map", "0:a"]
+                        
+                        cmd = [
+                            "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                            "-filter_complex", base_vf,
+                            "-map", "[vout]"
+                        ] + audio_map + [
+                            "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
+                            "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
+                            "FINAL_SHORT.mp4"
+                        ]
                     else:
                         # IMAGE background
                         final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
                         with Image.open(img_path) as im:
-                            im_resized = resize_to_video(im, width=vid_w, height=vid_h).convert("RGB")
+                            im_resized = resize_to_video(im, width=vid_w, height=vid_h, scale_mode=video_scale).convert("RGB")
                             im_resized.save(final_img_path, quality=95)
                         # Точная длительность аудио (избегаем хвостовой тишины)
                         probe = subprocess.run(
@@ -977,7 +1030,7 @@ else:
                         cmd = build_image_render_cmd(
                             final_img_path, aud_path, audio_dur, vid_w, vid_h,
                             viz_style, viz_h, viz_margin, viz_color,
-                            gradient_png_path=grad_png, ass_basename=None
+                            gradient_png_path=grad_png, ass_basename=ass_basename
                         )
 
                     st.write("Склейка (FFmpeg)...")
@@ -1090,25 +1143,28 @@ else:
                             # Вписать (Черные края)
                             base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout]"
 
+                        audio_map = []
                         if mute_video:
-                            cmd = [
-                                "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                "-filter_complex", base_vf,
-                                "-map", "[vout]", "-map", "1:a",
-                                "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
-                                "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
-                                "FINAL_SHORT.mp4"
-                            ]
+                            if audio_file is not None:
+                                audio_map = ["-map", "1:a"]
+                            else:
+                                audio_map = ["-an"]
                         else:
-                            # Mix: video audio + our audio together
-                            cmd = [
-                                "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
-                                "-filter_complex",
-                                f"{base_vf};[0:a][1:a]amix=inputs=2:duration=shortest[aout]",
-                                "-map", "[vout]", "-map", "[aout]",
-                                "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
-                                "FINAL_SHORT.mp4"
-                            ]
+                            if audio_file is not None:
+                                base_vf += ";[0:a][1:a]amix=inputs=2:duration=shortest[aout]"
+                                audio_map = ["-map", "[aout]"]
+                            else:
+                                audio_map = ["-map", "0:a"]
+                        
+                        cmd = [
+                            "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                            "-filter_complex", base_vf,
+                            "-map", "[vout]"
+                        ] + audio_map + [
+                            "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
+                            "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
+                            "FINAL_SHORT.mp4"
+                        ]
                     else:
                         # IMAGE background
                         final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
