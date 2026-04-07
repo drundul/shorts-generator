@@ -363,6 +363,34 @@ def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words
     if sub_style in ("karaoke", "one_word", "box", "teleprompter"):
         words = split_phrases_to_words(words)
 
+    def get_ass_font_info(fname):
+        base_name = fname.replace('.ttf', '').replace('.TTF', '')
+        font_paths = [
+            f"fonts/{base_name}.ttf",
+            f"{base_name}.ttf",
+            f"C:\\Windows\\Fonts\\{base_name}.ttf",
+            f"C:\\Windows\\Fonts\\{base_name}",
+            "fonts/arial.ttf"
+        ]
+        family = base_name
+        is_bold = False
+        for fp in font_paths:
+            if os.path.exists(fp):
+                try:
+                    f = ImageFont.truetype(fp, 20)
+                    family, style = f.getname()
+                    is_bold = ("Bold" in style or "Black" in style)
+                    break
+                except:
+                    pass
+        return family, is_bold
+
+    main_family, main_bold = get_ass_font_info(font_name)
+    static_family, static_bold = get_ass_font_info(static_font)
+    
+    main_bold_flag = "-1" if main_bold else "0"
+    static_bold_flag = "-1" if static_bold else "0"
+
     center_y = int(height/2 + offset_y)
     center_x = int(width/2)
     base_color = hex_to_ass_color(base_color_hex)
@@ -377,9 +405,9 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: BaseStyle,{font_name},{font_size},{base_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,0,5,50,50,0,1
-Style: BoxStyle,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,{highlight_color},&H00000000,-1,0,0,0,100,100,0,0,3,12,0,5,50,50,0,1
-Style: StaticStyle,{static_font},{static_size},{ass_static_color},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,0,5,50,50,0,1
+Style: BaseStyle,{main_family},{font_size},{base_color},&H00FFFFFF,&H00000000,&H80000000,{main_bold_flag},0,0,0,100,100,0,0,1,3,0,5,50,50,0,1
+Style: BoxStyle,{main_family},{font_size},&H00FFFFFF,&H00FFFFFF,{highlight_color},&H00000000,{main_bold_flag},0,0,0,100,100,0,0,3,12,0,5,50,50,0,1
+Style: StaticStyle,{static_family},{static_size},{ass_static_color},&H00FFFFFF,&H00000000,&H80000000,{static_bold_flag},0,0,0,100,100,0,0,1,2,0,5,50,50,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
