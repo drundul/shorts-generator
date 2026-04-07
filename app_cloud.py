@@ -1000,8 +1000,7 @@ else:
             with st.spinner("Извлекаем звук из видео..."):
                 subprocess.run(["ffmpeg", "-y", "-i", video_path, "-q:a", "0", "-map", "a", aud_path], capture_output=True)
                 if not os.path.exists(aud_path):
-                    st.error("В этом видео нет звука (или не удалось извлечь)! Пожалуйста, загрузите отдельный аудио файл.")
-                    st.stop()
+                    st.warning("⚠️ В этом видео нет звука. Будет сгенерировано видео без звука.")
 
     st.divider()
 
@@ -1058,17 +1057,23 @@ else:
                             else:
                                 audio_map = ["-map", "0:a"]
                         
-                        cmd = [
-                            "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                        cmd = ["ffmpeg", "-y", "-i", video_path]
+                        if os.path.exists(aud_path):
+                            cmd.extend(["-i", aud_path])
+                        
+                        cmd.extend([
                             "-filter_complex", base_vf,
                             "-map", "[vout]"
-                        ] + audio_map + [
+                        ])
+                        cmd.extend(audio_map)
+                        cmd.extend([
                             "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
                             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
                             "-map_metadata", "-1",
-                        ] + (["-t", str(target_duration)] if target_duration else []) + [
-                            "FINAL_SHORT.mp4"
-                        ]
+                        ])
+                        if target_duration:
+                            cmd.extend(["-t", str(target_duration)])
+                        cmd.append("FINAL_SHORT.mp4")
                     else:
                         # IMAGE background
                         final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
@@ -1220,17 +1225,23 @@ else:
                             else:
                                 audio_map = ["-map", "0:a"]
                         
-                        cmd = [
-                            "ffmpeg", "-y", "-i", video_path, "-i", aud_path,
+                        cmd = ["ffmpeg", "-y", "-i", video_path]
+                        if os.path.exists(aud_path):
+                            cmd.extend(["-i", aud_path])
+                            
+                        cmd.extend([
                             "-filter_complex", base_vf,
                             "-map", "[vout]"
-                        ] + audio_map + [
+                        ])
+                        cmd.extend(audio_map)
+                        cmd.extend([
                             "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
                             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
                             "-map_metadata", "-1",
-                        ] + (["-t", str(target_duration)] if target_duration else []) + [
-                            "FINAL_SHORT.mp4"
-                        ]
+                        ])
+                        if target_duration:
+                            cmd.extend(["-t", str(target_duration)])
+                        cmd.append("FINAL_SHORT.mp4")
                     else:
                         # IMAGE background
                         final_img_path = os.path.join(OUTPUT_DIR, "final_bg.jpg")
