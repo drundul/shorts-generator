@@ -319,7 +319,7 @@ def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
     # Простой случай: без градиента и визуализатора
     if not use_gradient and not use_viz:
         if use_ass:
-            return base_in + ["-vf", f"ass={ass_basename}"] + encode
+            return base_in + ["-vf", f"ass={ass_basename}:fontsdir='fonts/'"] + encode
         else:
             return base_in + encode
 
@@ -345,7 +345,7 @@ def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
             cur = "bg_v"
 
     if use_ass:
-        fc.append(f"[{cur}]ass={ass_basename}[vout]")
+        fc.append(f"[{cur}]ass={ass_basename}:fontsdir='fonts/'[vout]")
         cur = "vout"
 
     return base_in + extra_inputs + [
@@ -1029,19 +1029,19 @@ else:
                         if video_scale == "Размытый фон":
                             base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2"
                             if ass_basename:
-                                base_vf += f",ass={ass_basename}[vout]"
+                                base_vf += f",ass={ass_basename}:fontsdir='fonts/'[vout]"
                             else:
                                 base_vf += "[vout]"
                         elif video_scale == "Обрезать (Без краев)":
                             base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h}"
                             if ass_basename:
-                                base_vf += f",ass={ass_basename}[vout]"
+                                base_vf += f",ass={ass_basename}:fontsdir='fonts/'[vout]"
                             else:
                                 base_vf += "[vout]"
                         else:  # Вписать (Черные края)
                             base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2"
                             if ass_basename:
-                                base_vf += f",ass={ass_basename}[vout]"
+                                base_vf += f",ass={ass_basename}:fontsdir='fonts/'[vout]"
                             else:
                                 base_vf += "[vout]"
 
@@ -1200,12 +1200,12 @@ else:
 
                     if video_path:
                         if video_scale == "Размытый фон":
-                            base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}[vout]"
+                            base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}:fontsdir='fonts/'[vout]"
                         elif video_scale == "Обрезать (Без краев)":
-                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h},ass={ass_basename}[vout]"
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h},ass={ass_basename}:fontsdir='fonts/'[vout]"
                         else:
                             # Вписать (Черные края)
-                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}[vout]"
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}:fontsdir='fonts/'[vout]"
 
                         audio_map = []
                         if mute_video:
