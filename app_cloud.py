@@ -550,7 +550,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 )
                 text_line += effect
 
-            full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line}"
+            full_line = f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{{\\fad(100,100)\\pos({center_x},{center_y})}}{text_line.strip()}"
             events.append(full_line)
 
     # === MODE: TELEPROMPTER (SMOOTH SCROLL) ===
@@ -728,8 +728,9 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
         if not font: font = ImageFont.load_default()
 
         # Используем встроенное центрирование Pillow, чтобы оно на 100% совпадало с Alignment 5 в ASS (libass)
-        draw_obj.multiline_text((width / 2 + 3, target_y + 3), text, font=font, fill=(0,0,0,160), align="center", anchor="mm")
-        draw_obj.multiline_text((width / 2, target_y), text, font=font, fill=color, align="center", anchor="mm")
+        # stroke_width=3 имитирует параметр Outline=3 в ASS (прибавка к ширине)
+        draw_obj.multiline_text((width / 2, target_y), text, font=font, fill=color, align="center", anchor="mm",
+                                stroke_width=3, stroke_fill=(0,0,0,160))
 
     if base_color_hex.startswith('#'):
         h_b = base_color_hex.lstrip('#')
