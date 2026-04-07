@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import tempfile
 import re
+import shutil
 
 # ========================
 # AUTH: Password Gate
@@ -43,6 +44,28 @@ OUTPUT_DIR = os.path.join(WORK_DIR, "output")
 OVERLAY_PATH = os.path.join(ASSETS_DIR, "shorts_overlay.png")
 os.makedirs(ASSETS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Устанавливаем шрифты в систему Linux (для Streamlit Cloud)
+repo_fonts_dir = "fonts"
+if os.path.exists(repo_fonts_dir):
+    linux_fonts_dir = os.path.expanduser("~/.fonts")
+    os.makedirs(linux_fonts_dir, exist_ok=True)
+    fonts_copied = False
+    for f in os.listdir(repo_fonts_dir):
+        if f.endswith(".ttf") or f.endswith(".otf"):
+            src = os.path.join(repo_fonts_dir, f)
+            dst = os.path.join(linux_fonts_dir, f)
+            if not os.path.exists(dst):
+                try:
+                    shutil.copy(src, dst)
+                    fonts_copied = True
+                except:
+                    pass
+    if fonts_copied:
+        try:
+            subprocess.run(["fc-cache", "-f", "-v"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except:
+            pass
 
 # OpenAI key from Streamlit Secrets
 api_key = st.secrets.get("OPENAI_API_KEY", "")
@@ -355,6 +378,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if static_text:
         font = None
         font_paths = [
+            f"fonts/{static_font}.ttf",
             static_font + ".ttf",
             f"C:\\Windows\\Fonts\\{static_font}",
             f"C:\\Windows\\Fonts\\{static_font}.ttf",
@@ -644,6 +668,7 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
     def draw_centered_on_layer(draw_obj, text, target_y, f_name, f_sz, color=(255, 255, 255, 255)):
         font = None
         font_paths = [
+            f"fonts/{f_name}.ttf",
             f_name, 
             f"C:\\Windows\\Fonts\\{f_name}",
             f"C:\\Windows\\Fonts\\{f_name}.ttf",
@@ -698,6 +723,7 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             
         font = None
         font_paths = [
+            f"fonts/{static_font}.ttf",
             static_font + ".ttf",
             f"C:\\Windows\\Fonts\\{static_font}",
             f"C:\\Windows\\Fonts\\{static_font}.ttf",
@@ -819,9 +845,10 @@ with col2:
 
     FONTS = [
         "Montserrat-Bold", "Montserrat-Regular",
-        "Roboto-Bold", "Roboto-Regular",
-        "OpenSans-Bold", "BebasNeue-Regular",
-        "Arial", "Verdana", "Tahoma"
+        "Roboto-Black", "Roboto-Bold",
+        "Rubik-Black", "Oswald-Bold",
+        "RussoOne-Regular", "Comfortaa-Bold",
+        "Arial"
     ]
 
     font = st.selectbox("Шрифт", FONTS, index=0)
