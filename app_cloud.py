@@ -45,8 +45,9 @@ OVERLAY_PATH = os.path.join(ASSETS_DIR, "shorts_overlay.png")
 os.makedirs(ASSETS_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Устанавливаем шрифты в систему Linux (для Streamlit Cloud)
-ABS_FONTS_DIR = os.path.abspath("fonts")
+# Копируем шрифты в рабочую папку (путь без пробелов и спецсимволов — безопасно для FFmpeg)
+FFMPEG_FONTS_DIR = os.path.join(OUTPUT_DIR, "fonts")
+os.makedirs(FFMPEG_FONTS_DIR, exist_ok=True)
 repo_fonts_dir = "fonts"
 if os.path.exists(repo_fonts_dir):
     linux_fonts_dir = os.path.expanduser("~/.fonts")
@@ -55,11 +56,19 @@ if os.path.exists(repo_fonts_dir):
     for f in os.listdir(repo_fonts_dir):
         if f.endswith(".ttf") or f.endswith(".otf"):
             src = os.path.join(repo_fonts_dir, f)
+            # Копируем в системную папку Linux (для fontconfig)
             dst = os.path.join(linux_fonts_dir, f)
             if not os.path.exists(dst):
                 try:
                     shutil.copy(src, dst)
                     fonts_copied = True
+                except:
+                    pass
+            # Копируем в рабочую папку FFmpeg (путь без пробелов)
+            dst_ffmpeg = os.path.join(FFMPEG_FONTS_DIR, f)
+            if not os.path.exists(dst_ffmpeg):
+                try:
+                    shutil.copy(src, dst_ffmpeg)
                 except:
                     pass
     if fonts_copied:
@@ -320,7 +329,7 @@ def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
     # Простой случай: без градиента и визуализатора
     if not use_gradient and not use_viz:
         if use_ass:
-            return base_in + ["-vf", f"ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'"] + encode
+            return base_in + ["-vf", f"ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'"] + encode
         else:
             return base_in + encode
 
@@ -346,7 +355,7 @@ def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
             cur = "bg_v"
 
     if use_ass:
-        fc.append(f"[{cur}]ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]")
+        fc.append(f"[{cur}]ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]")
         cur = "vout"
 
     return base_in + extra_inputs + [
@@ -358,7 +367,9 @@ def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
 def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words_per_screen, offset_y,
                          static_text="", static_font="Arial", static_size=60, static_color="#FFFFFF", static_pos_y=500,
                          base_color_hex="#FFFFFF", highlight_color_hex="#FFFF00", uppercase=False, width=1080, height=1920,
-                         sub_style="karaoke"):
+                         sub_style="karaoke",
+                         cta_text="", cta_font="Arial", cta_size=35, cta_color="#FFFFFF", cta_pos_y=1800,
+                         cta_emoji="", cta_animate=False):
     # For karaoke, one_word, box, and teleprompter modes, split phrases into individual words
     if sub_style in ("karaoke", "one_word", "box", "teleprompter"):
         words = split_phrases_to_words(words)
@@ -387,9 +398,12 @@ def generate_karaoke_ass(words, output_ass_path, font_name, font_size, max_words
 
     main_family, main_bold = get_ass_font_info(font_name)
     static_family, static_bold = get_ass_font_info(static_font)
+    cta_family, cta_bold = get_ass_font_info(cta_font)
     
     main_bold_flag = "-1" if main_bold else "0"
     static_bold_flag = "-1" if static_bold else "0"
+    cta_bold_flag = "-1" if cta_bold else "0"
+    ass_cta_color = hex_to_ass_color(cta_color)
 
     center_y = int(height/2 + offset_y)
     center_x = int(width/2)
@@ -408,6 +422,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: BaseStyle,{main_family},{font_size},{base_color},&H00FFFFFF,&H00000000,&H80000000,{main_bold_flag},0,0,0,100,100,0,0,1,3,0,5,50,50,0,1
 Style: BoxStyle,{main_family},{font_size},&H00FFFFFF,&H00FFFFFF,{highlight_color},&H00000000,{main_bold_flag},0,0,0,100,100,0,0,3,12,0,5,50,50,0,1
 Style: StaticStyle,{static_family},{static_size},{ass_static_color},&H00FFFFFF,&H00000000,&H80000000,{static_bold_flag},0,0,0,100,100,0,0,1,2,0,5,50,50,0,1
+Style: CTAStyle,{cta_family},{cta_size},{ass_cta_color},&H00FFFFFF,&H00000000,&H80000000,{cta_bold_flag},0,0,0,100,100,0,0,1,2,0,5,50,50,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -624,6 +639,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 events.append(f"Dialogue: 0,{ass_start},{ass_end},BaseStyle,,0,0,0,,{old_prefix}{old_text}")
 
 
+    # === CTA TEXT (Call to Action в нижней чёрной полосе) ===
+    if cta_text:
+        full_cta = cta_text
+        if cta_emoji:
+            full_cta = f"{cta_text}\\N{cta_emoji}"
+
+        if cta_animate and cta_emoji:
+            # Статичный текст CTA (без эмодзи)
+            cta_event = f"Dialogue: 0,0:00:00.00,1:00:00.00,CTAStyle,,0,0,0,,{{\\pos({center_x},{cta_pos_y})}}{cta_text}"
+            events.append(cta_event)
+            # Пульсирующий эмодзи — цикл из коротких интервалов
+            emoji_y = cta_pos_y + cta_size + 10
+            for sec in range(120):  # покрываем до 2 минут видео
+                t_start = time_to_ass_format(sec * 0.8)
+                t_end = time_to_ass_format((sec + 1) * 0.8)
+                pulse = (
+                    f"{{\\pos({center_x},{emoji_y})"
+                    f"\\fscx100\\fscy100"
+                    f"\\t(0,400,\\fscx130\\fscy130)"
+                    f"\\t(400,800,\\fscx100\\fscy100)}}"
+                )
+                emoji_event = f"Dialogue: 0,{t_start},{t_end},CTAStyle,,0,0,0,,{pulse}{cta_emoji}"
+                events.append(emoji_event)
+        else:
+            # Простой статичный CTA (текст + эмодзи без анимации)
+            cta_event = f"Dialogue: 0,0:00:00.00,1:00:00.00,CTAStyle,,0,0,0,,{{\\pos({center_x},{cta_pos_y})}}{full_cta}"
+            events.append(cta_event)
+
     with open(output_ass_path, "w", encoding="utf-8-sig") as f:
         f.write(header + "\n".join(events))
 
@@ -684,7 +727,8 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
                          base_color_hex="#FFFFFF", uppercase_text=False, width=1080, height=1920,
                          no_subs=False, viz_style="none", viz_h=250, viz_margin=0, viz_color_hex="#FFFFFF",
                          use_gradient=False, gradient_zone=50, gradient_opacity=65, sub_style="karaoke",
-                         video_scale="Обрезать (Без краев)"):
+                         video_scale="Обрезать (Без краев)",
+                         cta_text="", cta_font="Arial", cta_size=35, cta_color="#FFFFFF", cta_pos_y=1800, cta_emoji=""):
     bg = Image.open(bg_image_path).convert("RGBA")
     bg = resize_to_video(bg, width, height, scale_mode=video_scale)
 
@@ -799,6 +843,19 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
             fnt = ImageFont.load_default()
         d.text((40, viz_y + 20), f"🎵 ЭФФЕКТ: {viz_style}", font=fnt, fill=(255,255,255,255))
 
+    # CTA-текст в нижней чёрной полосе
+    if cta_text:
+        if cta_color.startswith('#'):
+            h_cta = cta_color.lstrip('#')
+            rgb_cta = tuple(int(h_cta[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
+        else:
+            rgb_cta = (255, 255, 255, 255)
+        
+        cta_display = cta_text
+        if cta_emoji:
+            cta_display = f"{cta_text}\n{cta_emoji}"
+        draw_centered_on_layer(d, cta_display, cta_pos_y, cta_font, cta_size, color=rgb_cta)
+
     combined = Image.alpha_composite(bg, txt_layer)
 
     overlay_img_path = ensure_overlay_exists(width, height)
@@ -892,9 +949,8 @@ with col2:
     FONTS = [
         "Montserrat-Bold", "Montserrat-Regular",
         "Roboto-Black", "Roboto-Bold",
-        "Rubik-Black", "Oswald-Bold",
-        "RussoOne-Regular", "Comfortaa-Bold",
-        "Arial"
+        "Oswald-Bold", "RussoOne-Regular", 
+        "Comfortaa-Bold", "Arial"
     ]
 
     font = st.selectbox("Шрифт", FONTS, index=0)
@@ -971,6 +1027,31 @@ with col2:
         else:
             viz_h, viz_margin, viz_color = 250, 0, "#FFFFFF"
 
+    # --- CTA (Call to Action) в нижней чёрной полосе ---
+    cta_text = ""
+    cta_emoji = ""
+    cta_animate = False
+    cta_font_sel = "Arial"
+    cta_size_sel = 35
+    cta_color_sel = "#FFFFFF"
+    cta_pos_y_sel = int(vid_h * 0.92)  # ~92% высоты — нижняя чёрная полоса
+
+    if video_scale == "Вписать (Черные края)":
+        with st.expander("👇 CTA-текст (нижняя чёрная полоса)", expanded=False):
+            cta_text = st.text_input("Текст призыва", placeholder="read caption",
+                                     help="Текст, который будет постоянно висеть в нижней чёрной полосе")
+            cta_emoji = st.text_input("Эмодзи / символ (опционально)", value="👇",
+                                      help="Оставьте пустым, чтобы убрать. Можно использовать: 👇 ⬇️ 📖 🔥 и т.д.")
+            if cta_emoji:
+                cta_animate = st.checkbox("✨ Анимировать эмодзи (пульсация)", value=True)
+            ct_col1, ct_col2 = st.columns(2)
+            with ct_col1:
+                cta_font_sel = st.selectbox("Шрифт CTA", FONTS, index=0, key="cta_font_sel")
+                cta_color_sel = st.color_picker("Цвет CTA", "#FFFFFF", key="cta_color_pick")
+            with ct_col2:
+                cta_size_sel = st.slider("Размер CTA", 20, 80, 35, key="cta_size_sl")
+                cta_pos_y_sel = st.slider(f"Позиция Y CTA (0-верх, {vid_h}-низ)", 0, vid_h, int(vid_h * 0.92), step=10, key="cta_pos_sl")
+
 
     # Preview with text overlay
     preview_img_path = None
@@ -993,7 +1074,9 @@ with col2:
                                     base_color_hex=base_hex, uppercase_text=uppercase_cb, width=vid_w, height=vid_h,
                                     no_subs=no_subs, viz_style=viz_style, viz_h=viz_h, viz_margin=viz_margin, viz_color_hex=viz_color,
                                     use_gradient=use_gradient, gradient_zone=gradient_zone, gradient_opacity=gradient_opacity,
-                                    sub_style=sub_style, video_scale=video_scale)
+                                    sub_style=sub_style, video_scale=video_scale,
+                                    cta_text=cta_text, cta_font=cta_font_sel + ".ttf", cta_size=cta_size_sel,
+                                    cta_color=cta_color_sel, cta_pos_y=cta_pos_y_sel, cta_emoji=cta_emoji)
         # Scale preview to fit Streamlit column nicely
         prev_ratio = vid_w / vid_h
         prev.thumbnail((350, int(350 / prev_ratio)))
@@ -1036,32 +1119,35 @@ else:
                     st.write("Подготовка файлов...")
 
                     ass_basename = None
-                    if static_text:
-                        st.write("Генерация заголовка...")
+                    if static_text or cta_text:
+                        st.write("Генерация текстовых элементов...")
                         ass_path = os.path.join(OUTPUT_DIR, "subs_static.ass")
                         generate_karaoke_ass([], ass_path, font, size, words_per_line, offset,
                                             static_text, st_font, st_size, st_color, st_pos,
                                             base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
-                                            width=vid_w, height=vid_h, sub_style=sub_style)
+                                            width=vid_w, height=vid_h, sub_style=sub_style,
+                                            cta_text=cta_text, cta_font=cta_font_sel, cta_size=cta_size_sel,
+                                            cta_color=cta_color_sel, cta_pos_y=cta_pos_y_sel,
+                                            cta_emoji=cta_emoji, cta_animate=cta_animate)
                         ass_basename = os.path.basename(ass_path)
 
                     if video_path:
                         if video_scale == "Размытый фон":
                             base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2"
                             if ass_basename:
-                                base_vf += f",ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]"
+                                base_vf += f",ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]"
                             else:
                                 base_vf += "[vout]"
                         elif video_scale == "Обрезать (Без краев)":
                             base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h}"
                             if ass_basename:
-                                base_vf += f",ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]"
+                                base_vf += f",ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]"
                             else:
                                 base_vf += "[vout]"
                         else:  # Вписать (Черные края)
                             base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2"
                             if ass_basename:
-                                base_vf += f",ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]"
+                                base_vf += f",ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]"
                             else:
                                 base_vf += "[vout]"
 
@@ -1218,7 +1304,10 @@ else:
                     generate_karaoke_ass(words_sorted, ass_path, font, size, words_per_line, offset,
                                         static_text, st_font, st_size, st_color, st_pos,
                                         base_color_hex=base_hex, highlight_color_hex=highlight_hex, uppercase=uppercase_cb,
-                                        width=vid_w, height=vid_h, sub_style=sub_style)
+                                        width=vid_w, height=vid_h, sub_style=sub_style,
+                                        cta_text=cta_text, cta_font=cta_font_sel, cta_size=cta_size_sel,
+                                        cta_color=cta_color_sel, cta_pos_y=cta_pos_y_sel,
+                                        cta_emoji=cta_emoji, cta_animate=cta_animate)
 
                     st.write("Склейка (FFmpeg)...")
                     out_file = os.path.join(OUTPUT_DIR, "FINAL_SHORT.mp4")
@@ -1226,12 +1315,12 @@ else:
 
                     if video_path:
                         if video_scale == "Размытый фон":
-                            base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]"
+                            base_vf = f"[0:v:0]split[a][b];[a]scale={vid_w}:{vid_h},boxblur=20:20[1];[b]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease[2];[1][2]overlay=(W-w)/2:(H-h)/2,ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]"
                         elif video_scale == "Обрезать (Без краев)":
-                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h},ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]"
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=increase,crop={vid_w}:{vid_h},ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]"
                         else:
                             # Вписать (Черные края)
-                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}:fontsdir='{ABS_FONTS_DIR}'[vout]"
+                            base_vf = f"[0:v:0]scale={vid_w}:{vid_h}:force_original_aspect_ratio=decrease,pad={vid_w}:{vid_h}:(ow-iw)/2:(oh-ih)/2,ass={ass_basename}:fontsdir='{FFMPEG_FONTS_DIR}'[vout]"
 
                         audio_map = []
                         if mute_video:
