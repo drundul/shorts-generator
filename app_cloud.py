@@ -938,10 +938,13 @@ def create_preview_image(bg_image_path, font_name, font_size, offset_y, text_sam
         else:
             rgb_cta = (255, 255, 255, 255)
         
-        cta_display = cta_text
+        draw_centered_on_layer(d, cta_text, cta_pos_y, cta_font, cta_size, color=rgb_cta)
+        
         if cta_emoji:
-            cta_display = f"{cta_text}\n{cta_emoji}"
-        draw_centered_on_layer(d, cta_display, cta_pos_y, cta_font, cta_size, color=rgb_cta)
+            emoji_y = cta_pos_y + cta_size + 10
+            # Рисуем эмодзи через Noto Emoji напрямую, так как PIL не делает fallback
+            draw_centered_on_layer(d, cta_emoji, emoji_y, "NotoEmoji-Regular", cta_size, color=rgb_cta)
+
 
     combined = Image.alpha_composite(bg, txt_layer)
 
