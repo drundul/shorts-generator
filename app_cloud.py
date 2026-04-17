@@ -730,7 +730,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     if cta_text:
         full_cta = cta_text
         if cta_emoji:
-            full_cta = f"{cta_text}\\N{cta_emoji}"
+            full_cta = f"{cta_text}\\N{{\\fnNoto Emoji}}{cta_emoji}"
 
         if cta_animate and cta_emoji:
             # Статичный текст CTA (без эмодзи)
@@ -742,7 +742,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 t_start = time_to_ass_format(sec * 0.8)
                 t_end = time_to_ass_format((sec + 1) * 0.8)
                 pulse = (
-                    f"{{\\pos({center_x},{emoji_y})"
+                    f"{{\\fnNoto Emoji\\pos({center_x},{emoji_y})"
                     f"\\fscx100\\fscy100"
                     f"\\t(0,400,\\fscx130\\fscy130)"
                     f"\\t(400,800,\\fscx100\\fscy100)}}"
