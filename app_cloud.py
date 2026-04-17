@@ -300,17 +300,106 @@ def create_gradient_overlay_png(path, width, height, dark_zone_ratio=0.5, max_op
     return path
 
 
+# --- FUNC: METADATA PRESETS (Organic Video Fingerprint) ---
+from datetime import datetime, timezone
+
+METADATA_PRESETS = {
+    "🚫 Без маскировки (пустые)": {},
+    "🍎 iPhone 15 Pro Max": {
+        "make": "Apple", "model": "iPhone 15 Pro Max",
+        "software": "18.3.2", "encoder": "iPhone 15 Pro Max",
+        "handler_name": "Core Media Video",
+    },
+    "🍎 iPhone 14 Pro": {
+        "make": "Apple", "model": "iPhone 14 Pro",
+        "software": "17.4.1", "encoder": "iPhone 14 Pro",
+        "handler_name": "Core Media Video",
+    },
+    "🍎 iPhone 13": {
+        "make": "Apple", "model": "iPhone 13",
+        "software": "16.7.5", "encoder": "iPhone 13",
+        "handler_name": "Core Media Video",
+    },
+    "🤖 Samsung Galaxy S24 Ultra": {
+        "make": "samsung", "model": "SM-S928B",
+        "software": "S928BXXS4AXK1",
+    },
+    "🤖 Samsung Galaxy S23": {
+        "make": "samsung", "model": "SM-S911B",
+        "software": "S911BXXU5CXJ3",
+    },
+    "🤖 Google Pixel 8 Pro": {
+        "make": "Google", "model": "Pixel 8 Pro",
+        "software": "AP2A.240805.005.F1",
+    },
+    "✂️ CapCut": {
+        "software": "CapCut",
+        "handler_name": "CapCut Video Handler",
+    },
+    "✂️ InShot": {
+        "software": "InShot Video Editor",
+    },
+    "🎬 Adobe Premiere Pro 2024": {
+        "software": "Adobe Premiere Pro 2024.0 (Windows)",
+        "handler_name": "Adobe Premiere Pro",
+    },
+    "🎬 DaVinci Resolve 19": {
+        "software": "DaVinci Resolve 19.0",
+        "handler_name": "DaVinci Resolve",
+    },
+    "🍏 Final Cut Pro": {
+        "software": "Final Cut Pro 11.0",
+        "handler_name": "Apple Video Media Handler",
+    },
+    "📱 TikTok (Repost-вид)": {
+        "software": "com.zhiliaoapp.musically",
+        "handler_name": "TikTok Video",
+    },
+}
+
+def get_metadata_flags(preset_name, use_current_time=True):
+    """
+    Возвращает список FFmpeg-аргументов для подмены метаданных.
+    Включает -map_metadata -1 (стирание оригинальных) + нужные -metadata теги + bitexact.
+    """
+    flags = ["-map_metadata", "-1"]
+    preset = METADATA_PRESETS.get(preset_name, {})
+
+    if not preset:
+        return flags  # Пустые метаданные (как раньше)
+
+    if use_current_time:
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+        flags.extend(["-metadata", f"creation_time={now_utc}"])
+
+    for key, val in preset.items():
+        if key == "handler_name":
+            # handler_name ставится на уровне потока, а не файла
+            flags.extend(["-metadata:s:v:0", f"handler_name={val}"])
+        elif key == "encoder":
+            flags.extend(["-metadata:s:v:0", f"encoder={val}"])
+        else:
+            flags.extend(["-metadata", f"{key}={val}"])
+
+    # Подавляем автоматическую подпись FFmpeg (Lavf...) в бинарном потоке
+    flags.extend(["-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact"])
+    return flags
+
 def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
                            viz_style, viz_h, viz_margin, viz_color,
-                           gradient_png_path=None, ass_basename=None, max_duration=None):
+                           gradient_png_path=None, ass_basename=None, max_duration=None,
+                           metadata_flags=None):
     """
     Строит FFmpeg-команду для рендера на фото-фоне.
     Обрабатывает все комбинации: градиент + визуализатор + субтитры.
     max_duration: если задан (секунды), обрезает видео до этой длины (но не длиннее аудио).
+    metadata_flags: список FFmpeg-аргументов для метаданных (от get_metadata_flags).
     """
     use_viz = viz_style != "none"
     use_gradient = gradient_png_path is not None
     use_ass = ass_basename is not None
+    if metadata_flags is None:
+        metadata_flags = ["-map_metadata", "-1"]
 
     # Эффективная длина: не длиннее аудио и не длиннее лимита пользователя
     if max_duration is not None:
@@ -319,12 +408,10 @@ def build_image_render_cmd(final_img_path, aud_path, audio_dur, vid_w, vid_h,
         effective_dur = audio_dur
 
     base_in = ["ffmpeg", "-y", "-loop", "1", "-t", audio_dur, "-i", final_img_path, "-i", aud_path]
-    # Явные настройки качества: CRF 23, tune stillimage (для фото), битрейт звука 128k
-    # -map_metadata -1 — очищаем все метаданные из итогового файла
-    # -t effective_dur — ограничиваем длину (если задан max_duration)
     encode = ["-c:v", "libx264", "-crf", "26", "-preset", "faster", "-tune", "stillimage",
-              "-level", "4.1", "-r", "24", "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p",
-              "-map_metadata", "-1", "-t", effective_dur, "FINAL_SHORT.mp4"]
+              "-level", "4.1", "-r", "24", "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p"]
+    encode.extend(metadata_flags)
+    encode.extend(["-t", effective_dur, "FINAL_SHORT.mp4"])
 
     # Простой случай: без градиента и визуализатора
     if not use_gradient and not use_viz:
@@ -1052,6 +1139,14 @@ with col2:
                 cta_size_sel = st.slider("Размер CTA", 20, 80, 35, key="cta_size_sl")
                 cta_pos_y_sel = st.slider(f"Позиция Y CTA (0-верх, {vid_h}-низ)", 0, vid_h, int(vid_h * 0.92), step=10, key="cta_pos_sl")
 
+    # --- МАСКИРОВКА МЕТАДАННЫХ ---
+    with st.expander("🕵️‍♂️ Маскировка (Метаданные видео)", expanded=False):
+        st.caption("Алгоритмы соцсетей больше доверяют роликам, снятым на телефон или смонтированным в популярных редакторах.")
+        meta_preset = st.selectbox("Пресет метаданных", list(METADATA_PRESETS.keys()), index=1,
+                                   help="Выберите устройство или редактор, под который замаскировать видео")
+        meta_use_time = st.checkbox("⏰ Подставить текущее время создания", value=True,
+                                    help="Без этого дата будет 1970 год — верный признак автогенерации")
+    meta_flags = get_metadata_flags(meta_preset, use_current_time=meta_use_time)
 
     # Preview with text overlay
     preview_img_path = None
@@ -1176,8 +1271,8 @@ else:
                         cmd.extend([
                             "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
                             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
-                            "-map_metadata", "-1",
                         ])
+                        cmd.extend(meta_flags)
                         if target_duration:
                             cmd.extend(["-t", str(target_duration)])
                         cmd.append("FINAL_SHORT.mp4")
@@ -1206,7 +1301,7 @@ else:
                             final_img_path, aud_path, audio_dur, vid_w, vid_h,
                             viz_style, viz_h, viz_margin, viz_color,
                             gradient_png_path=grad_png, ass_basename=ass_basename,
-                            max_duration=target_duration
+                            max_duration=target_duration, metadata_flags=meta_flags
                         )
 
                     st.write("Склейка (FFmpeg)...")
@@ -1347,8 +1442,8 @@ else:
                         cmd.extend([
                             "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", "24",
                             "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p", "-shortest",
-                            "-map_metadata", "-1",
                         ])
+                        cmd.extend(meta_flags)
                         if target_duration:
                             cmd.extend(["-t", str(target_duration)])
                         cmd.append("FINAL_SHORT.mp4")
@@ -1377,7 +1472,7 @@ else:
                             final_img_path, aud_path, audio_dur, vid_w, vid_h,
                             viz_style, viz_h, viz_margin, viz_color,
                             gradient_png_path=grad_png, ass_basename=ass_basename,
-                            max_duration=target_duration
+                            max_duration=target_duration, metadata_flags=meta_flags
                         )
 
                     process = subprocess.Popen(cmd, cwd=OUTPUT_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
