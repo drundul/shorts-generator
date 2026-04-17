@@ -215,6 +215,14 @@ def hex_to_ass_color(hex_str):
         return f"&H00{b}{g}{r}"
     return "&H00FFFFFF"
 
+def generate_download_filename(static_text):
+    if not static_text.strip():
+        return "FINAL_SHORT.mp4"
+    words = [w for w in re.sub(r'[^\w\s]', '', static_text).split() if w]
+    if not words:
+        return "FINAL_SHORT.mp4"
+    return "_".join(words[:6]) + ".mp4"
+
 def split_phrases_to_words(words):
     """
     Если элементы содержат пробелы (фразы из SRT), разбивает их на отдельные слова
@@ -1315,7 +1323,7 @@ else:
                         st.success("ГОТОВО!")
                         st.balloons()
                         with open(out_file, "rb") as f:
-                            st.download_button("📩 Скачать файл", f, "FINAL_SHORT.mp4")
+                            st.download_button("📩 Скачать файл", f, generate_download_filename(static_text))
                     else:
                         st.error("Ошибка при рендере FFmpeg")
                         st.code(stderr.decode("utf-8", errors="ignore")[-1500:], language="text")
@@ -1486,7 +1494,7 @@ else:
                         st.balloons()
 
                         with open(out_file, "rb") as f:
-                            st.download_button("📩 Скачать файл", f, "FINAL_SHORT.mp4")
+                            st.download_button("📩 Скачать файл", f, generate_download_filename(static_text))
                     else:
                         st.error("Ошибка при рендере FFmpeg")
                         st.code(stderr.decode("utf-8", errors="ignore")[-1500:], language="text")
