@@ -1,6 +1,6 @@
-streamlit>=1.30.0
-openai>=1.0.0
+streamlit>=1.30.0,<1.54.0
+openai>=1.0.0,<2.0.0
 python-dotenv
-Pillow
-numpy
-pandas
+Pillow>=10.0.0
+numpy>=1.24.0
+pandas>=2.0.0
